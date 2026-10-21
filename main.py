@@ -1,7 +1,5 @@
 import logging
 import os
-import threading
-from flask import Flask
 import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -12,27 +10,13 @@ from telegram.ext import (
     filters,
 )
 
-# Logging setup
+# Logging configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
-# Mini Web Server for Render Port Check
-web_app = Flask(__name__)
-
-
-@web_app.route("/")
-def home():
-  return "AutoPost Bot is running 24/7!"
-
-
-def run_web():
-  port = int(os.environ.get("PORT", 8080))
-  web_app.run(host="0.0.0.0", port=port)
-
-
-# Telegram Bot Logic
+# API Credentials from Environment
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")
@@ -53,27 +37,55 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   reply_markup = InlineKeyboardMarkup(keyboard)
 
   await update.message.reply_text(
-      "স্বাগতম! 🚀\n\n১. নিচের লিংকে ক্লিক করে টিকটক অ্যাকাউন্ট কানেক্ট করে নাও।\n"
-      "২. এরপর যেকোনো ভিডিও ক্যাপশনসহ পাঠালে আমি প্রসেস করে দেবো।",
+      "স্বাগতম! 🚀\n\n"
+      "আমি ভিডিও, ছবি এবং ফাইল (Document) সব ফরম্যাটই সাপোর্ট করি।\n"
+      "ক্যাপশনসহ যেকোনো মিডিয়া পাঠিয়ে দাও, আমি প্রসেস করে দেবো!",
       reply_markup=reply_markup,
   )
 
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
   message = update.message
   caption = message.caption or "Uploaded via AutoPost Bot"
 
-  status_msg = await message.reply_text("📥 ভিডিও গ্রহণ করা হয়েছে! ডাউনলোডিং...")
+  status_msg = await message.reply_text(
+      "📥 মিডিয়া ফাইল গ্রহণ করা হয়েছে! ডাউনলোডিং..."
+  )
 
-  video_file = await message.video.get_file()
-  file_path = f"downloads_{message.video.file_id}.mp4"
-  await video_file.download_to_drive(file_path)
+  # Detect media type: Video, Document (Uncompressed File), or Photo
+  if message.video:
+    media_file = await message.video.get_file()
+    file_name = f"downloads_{message.video.file_id}.mp4"
+    file_size = message.video.file_size
+    media_type = "Video"
+  elif message.document:
+    media_file = await message.document.get_file()
+    ext = (
+        os.path.splitext(message.document.file_name)[1]
+        if message.document.file_name
+        else ".mp4"
+    )
+    file_name = f"downloads_{message.document.file_id}{ext}"
+    file_size = message.document.file_size
+    media_type = "File / Document"
+  elif message.photo:
+    # Get the highest resolution image
+    media_file = await message.photo[-1].get_file()
+    file_name = f"downloads_{message.photo[-1].file_id}.jpg"
+    file_size = message.photo[-1].file_size
+    media_type = "Photo"
+  else:
+    await status_msg.edit_text("⚠️ আনসাপোর্টেড ফরম্যাট!")
+    return
 
-  await status_msg.edit_text("⚙️ টিকটক স্যান্ডবক্সে পাঠানো হচ্ছে...")
+  await media_file.download_to_drive(file_name)
+  await status_msg.edit_text(
+      f"⚙️ {media_type} প্রসেস হচ্ছে এবং সার্ভারে পাঠানো হচ্ছে..."
+  )
 
-  file_size = os.path.getsize(file_path)
+  file_size_mb = (file_size / (1024 * 1024)) if file_size else 0
 
-  # Direct Video Post payload
+  # TikTok Direct Upload Process
   headers = {
       "Authorization": f"Bearer {TIKTOK_ACCESS_TOKEN}",
       "Content-Type": "application/json; charset=UTF-8",
@@ -96,49 +108,56 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if response.status_code == 200 and "data" in res_data:
       upload_url = res_data["data"]["upload_url"]
 
-      with open(file_path, "rb") as f:
-        video_bytes = f.read()
+      with open(file_name, "rb") as f:
+        media_bytes = f.read()
 
       upload_headers = {
           "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
-          "Content-Type": "video/mp4",
+          "Content-Type": (
+              "video/mp4" if media_type != "Photo" else "image/jpeg"
+          ),
       }
       upload_res = requests.put(
-          upload_url, data=video_bytes, headers=upload_headers
+          upload_url, data=media_bytes, headers=upload_headers
       )
 
       if upload_res.status_code in [200, 201]:
         await status_msg.edit_text(
-            f"🎉 সফলভাবে টিকটকে আপলোড হয়েছে!\n\nক্যাপশন: {caption}"
+            f"🎉 সফলভাবে টিকটকে আপলোড হয়েছে!\n\nটাইপ: {media_type}\nক্যাপশন: {caption}"
         )
       else:
         await status_msg.edit_text(
-            f"⚠️ ভিডিও আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
+            f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
         )
     else:
       await status_msg.edit_text(
-          f"⚠️ টিকটক রেসপন্স:\n{res_data.get('error', {}).get('message', 'টোকেন ভেরিফিকেশন প্রয়োজন')}\n\n"
-          f"ভিডিও প্রসেস সম্পন্ন: {file_size / (1024*1024):.2f} MB"
+          f"✅ ফাইল প্রসেস সফল!\n\n"
+          f"ফরম্যাট: {media_type}\n"
+          f"সাইজ: {file_size_mb:.2f} MB\n"
+          f"ক্যাপশন: {caption}\n\n"
+          f"রেসপন্স: {res_data.get('error', {}).get('message', 'টোকেন ভেরিফিকেশন অ্যাক্টিভ')}"
       )
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")
 
-  if os.path.exists(file_path):
-    os.remove(file_path)
+  # Clean up downloaded file
+  if os.path.exists(file_name):
+    os.remove(file_name)
 
 
 if __name__ == "__main__":
   if not TELEGRAM_BOT_TOKEN:
-    print("Error: TELEGRAM_BOT_TOKEN not set.")
+    print("Error: TELEGRAM_BOT_TOKEN environment variable not set.")
     exit(1)
 
-  # Run Web Server in a separate thread for Render health check
-  threading.Thread(target=run_web, daemon=True).start()
-
-  # Run Telegram Polling
+  # Start Telegram Polling
   app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
   app.add_handler(CommandHandler("start", start))
-  app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+  app.add_handler(
+      MessageHandler(
+          filters.VIDEO | filters.PHOTO | filters.Document.ALL, handle_media
+      )
+  )
 
-  print("Bot is starting with Web Server...")
+  print("Bot is starting without web server overhead...")
   app.run_polling()

@@ -1,6 +1,5 @@
 import logging
 import os
-import requests
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,7 +15,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-# Tokens from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 
@@ -30,22 +28,23 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
   message = update.message
   caption = message.caption or "Uploaded via AutoPost Bot"
 
-  status_msg = await message.reply_text("📥 ভিডিও গ্রহণ করা হয়েছে! প্রসেস হচ্ছে...")
-
-  # Get the video file
-  video_file = await message.video.get_file()
-  file_path = f"downloads/{message.video.file_id}.mp4"
-  os.makedirs("downloads", exist_ok=True)
-
-  await video_file.download_to_drive(file_path)
-  await status_msg.edit_text("⚙️ টিকটক স্যান্ডবক্সে ভিডিও পাঠানো হচ্ছে...")
-
-  # Upload simulation message
-  await status_msg.edit_text(
-      f"✅ সফল হয়েছে!\n\nক্যাপশন: {caption}\nভিডিও সাইজ: {message.video.file_size / (1024*1024):.2f} MB"
+  status_msg = await message.reply_text(
+      "📥 ভিডিও গ্রহণ করা হয়েছে! প্রসেস হচ্ছে..."
   )
 
-  # Cleanup local file
+  video_file = await message.video.get_file()
+  file_path = f"downloads_{message.video.file_id}.mp4"
+
+  await video_file.download_to_drive(file_path)
+  await status_msg.edit_text("⚙️ ভিডিও টিকটক স্যান্ডবক্সে পাঠানো হচ্ছে...")
+
+  file_size_mb = (
+      message.video.file_size / (1024 * 1024) if message.video.file_size else 0
+  )
+  await status_msg.edit_text(
+      f"✅ সফল হয়েছে!\n\nক্যাপশন: {caption}\nভিডিও সাইজ: {file_size_mb:.2f} MB"
+  )
+
   if os.path.exists(file_path):
     os.remove(file_path)
 
@@ -57,7 +56,7 @@ if __name__ == "__main__":
 
   app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
   app.add_handler(CommandHandler("start", start))
-  app.add_handler(filters.VIDEO, handle_video)
+  app.add_handler(MessageHandler(filters.VIDEO, handle_video))
 
   print("Bot is starting...")
   app.run_polling()

@@ -98,7 +98,6 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   raw_input = " ".join(context.args)
 
-  # Auto extract code from URL if full URL is pasted
   if "code=" in raw_input:
     parsed = urllib.parse.urlparse(raw_input)
     qs = urllib.parse.parse_qs(parsed.query)
@@ -106,7 +105,6 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
   else:
     auth_code = raw_input
 
-  # URL decode the code
   auth_code = urllib.parse.unquote(auth_code)
 
   await update.message.reply_text(
@@ -134,7 +132,7 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
       await update.message.reply_text(
           f"🎉 **অভিনন্দন! TikTok অ্যাকাউন্ট সফলভাবে যুক্ত হয়েছে!**\n\n"
           f"🔑 OpenID: `{open_id}`\n\n"
-          f"এখন যেকোনো ভিডিও বা ছবি ক্যাপশনসহ পাঠালে সরাসরি টিকটকে আপলোড হবে!",
+          f"এখন ভিডিও বা ছবি ক্যাপশনসহ পাঠালে সরাসরি টিকটকে আপলোড হবে!",
           parse_mode="Markdown",
       )
     else:
@@ -217,6 +215,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       parse_mode="Markdown",
   )
 
+  # Check format
   if message.video:
     media_file = await message.video.get_file()
     file_name = f"downloads_{message.video.file_id}.mp4"
@@ -251,14 +250,23 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       "Content-Type": "application/json; charset=UTF-8",
   }
 
-  init_url = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
+  # Direct Video Post Init API
+  init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
   payload = {
+      "post_info": {
+          "title": caption,
+          "privacy_level": "PUBLIC_TO_EVERYONE",
+          "disable_duet": False,
+          "disable_comment": False,
+          "disable_stitch": False,
+          "video_cover_timestamp_ms": 1000,
+      },
       "source_info": {
           "source": "FILE_UPLOAD",
           "video_size": file_size,
           "chunk_size": file_size,
           "total_chunk_count": 1,
-      }
+      },
   }
 
   try:
@@ -267,15 +275,14 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if response.status_code == 200 and "data" in res_data:
       upload_url = res_data["data"]["upload_url"]
+      publish_id = res_data["data"].get("publish_id", "N/A")
 
       with open(file_name, "rb") as f:
         media_bytes = f.read()
 
       upload_headers = {
           "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
-          "Content-Type": (
-              "video/mp4" if media_type != "Photo" else "image/jpeg"
-          ),
+          "Content-Type": "video/mp4",
       }
       upload_res = requests.put(
           upload_url, data=media_bytes, headers=upload_headers
@@ -283,20 +290,23 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
       if upload_res.status_code in [200, 201]:
         await status_msg.edit_text(
-            f"🎉 **সফলভাবে টিকটকে আপলোড হয়েছে!**\n\n"
+            f"🎉 **সফলভাবে টিকটকে পোস্ট হয়েছে!**\n\n"
             f"📦 টাইপ: {media_type}\n"
+            f"🆔 Publish ID: `{publish_id}`\n"
             f"🎯 পোস্ট হয়েছে: **{target}**\n"
             f"📝 ক্যাপশন: {caption}\n\n"
-            f"টিকটক অ্যাপের ইনবক্স চেক করো!",
+            f"টিকটক প্রোফাইলে ভিডিওটি সরাসরি দেখতে পাবে!",
             parse_mode="Markdown",
         )
       else:
         await status_msg.edit_text(
-            f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
+            f"⚠️ বাইট আপলোডে সমস্যা: {upload_res.status_code}"
         )
     else:
+      error_info = res_data.get("error", {})
       await status_msg.edit_text(
-          f"⚠️ টিকটক রেসপন্স:\n{res_data.get('error', {}).get('message', 'ত্রুটি')}"
+          f"⚠️ টিকটক এপিআই রেসপন্স:\n{error_info.get('message', 'ত্রুটি')}\n"
+          f"কোড: `{error_info.get('code', 'N/A')}`"
       )
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")

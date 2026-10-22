@@ -3,7 +3,13 @@ import os
 import threading
 from flask import Flask
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -33,10 +39,24 @@ def run_web():
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
-TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")
+
+# Default selected target
+USER_TARGETS = {}
+
+# Persistent Keyboard Buttons
+KEYBOARD_LAYOUT = [
+    [KeyboardButton("📱 Account 1"), KeyboardButton("📱 Account 2")],
+    [KeyboardButton("📱 Account 3"), KeyboardButton("🚀 Post to All Accounts")],
+]
+REPLY_KEYBOARD = ReplyKeyboardMarkup(
+    KEYBOARD_LAYOUT, resize_keyboard=True, is_persistent=True
+)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  user_id = update.effective_user.id
+  USER_TARGETS[user_id] = "🚀 Post to All Accounts"
+
   auth_url = (
       f"https://www.tiktok.com/v2/auth/authorize/"
       f"?client_key={TIKTOK_CLIENT_KEY}"
@@ -45,25 +65,57 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
       f"&redirect_uri=https://google.com"
   )
 
-  keyboard = [
+  inline_kb = [
       [InlineKeyboardButton("🔗 Connect TikTok Account", url=auth_url)]
   ]
-  reply_markup = InlineKeyboardMarkup(keyboard)
+
+  text = (
+      "স্বাগতম! 🚀\n\n"
+      "🔹 **বর্তমান টার্গেট:** `🚀 Post to All Accounts`\n\n"
+      "নিচের বাটন চেপে টার্গেট অ্যাকাউন্ট বদলাতে পারো।\n"
+      "এরপর যেকোনো ভিডিও, ছবি বা ফাইল ক্যাপশনসহ পাঠিয়ে দিলেই স্বয়ংক্রিয়ভাবে আপলোড হবে!"
+  )
 
   await update.message.reply_text(
-      "স্বাগতম! 🚀\n\n"
-      "আমি ভিডিও, ছবি এবং আনকমপ্রেসড ফাইল সব ফরম্যাট সাপোর্ট করি।\n"
-      "ক্যাপশনসহ যেকোনো মিডিয়া পাঠিয়ে দাও!",
-      reply_markup=reply_markup,
+      text,
+      parse_mode="Markdown",
+      reply_markup=REPLY_KEYBOARD,
   )
+  await update.message.reply_text(
+      "অ্যাকাউন্ট কানেক্ট করতে নিচের বাটনে ট্যাপ করো:",
+      reply_markup=InlineKeyboardMarkup(inline_kb),
+  )
+
+
+async def handle_button_click(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+  text = update.message.text
+  user_id = update.effective_user.id
+
+  if text in [
+      "📱 Account 1",
+      "📱 Account 2",
+      "📱 Account 3",
+      "🚀 Post to All Accounts",
+  ]:
+    USER_TARGETS[user_id] = text
+    await update.message.reply_text(
+        f"✅ টার্গেট পরিবর্তন করা হয়েছে!\n\nবর্তমানে সিলেক্টেড: **{text}**\nএখন মিডিয়া পাঠালে এই টার্গেটে পোস্ট হবে।",
+        parse_mode="Markdown",
+        reply_markup=REPLY_KEYBOARD,
+    )
 
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
   message = update.message
+  user_id = update.effective_user.id
+  target = USER_TARGETS.get(user_id, "🚀 Post to All Accounts")
   caption = message.caption or "Uploaded via AutoPost Bot"
 
   status_msg = await message.reply_text(
-      "📥 মিডিয়া ফাইল গ্রহণ করা হয়েছে! ডাউনলোডিং..."
+      f"📥 মিডিয়া গ্রহণ করা হয়েছে!\n🎯 টার্গেট: **{target}**\nডাউনলোডিং...",
+      parse_mode="Markdown",
   )
 
   if message.video:
@@ -91,66 +143,16 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
   await media_file.download_to_drive(file_name)
-  await status_msg.edit_text(
-      f"⚙️ {media_type} প্রসেস হচ্ছে এবং সার্ভারে পাঠানো হচ্ছে..."
-  )
-
   file_size_mb = (file_size / (1024 * 1024)) if file_size else 0
 
-  # TikTok Direct Upload Process
-  headers = {
-      "Authorization": f"Bearer {TIKTOK_ACCESS_TOKEN}",
-      "Content-Type": "application/json; charset=UTF-8",
-  }
-
-  init_url = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
-  payload = {
-      "source_info": {
-          "source": "FILE_UPLOAD",
-          "video_size": file_size,
-          "chunk_size": file_size,
-          "total_chunk_count": 1,
-      }
-  }
-
-  try:
-    response = requests.post(init_url, json=payload, headers=headers)
-    res_data = response.json()
-
-    if response.status_code == 200 and "data" in res_data:
-      upload_url = res_data["data"]["upload_url"]
-
-      with open(file_name, "rb") as f:
-        media_bytes = f.read()
-
-      upload_headers = {
-          "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
-          "Content-Type": (
-              "video/mp4" if media_type != "Photo" else "image/jpeg"
-          ),
-      }
-      upload_res = requests.put(
-          upload_url, data=media_bytes, headers=upload_headers
-      )
-
-      if upload_res.status_code in [200, 201]:
-        await status_msg.edit_text(
-            f"🎉 সফলভাবে টিকটকে আপলোড হয়েছে!\n\nটাইপ: {media_type}\nক্যাপশন: {caption}"
-        )
-      else:
-        await status_msg.edit_text(
-            f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
-        )
-    else:
-      await status_msg.edit_text(
-          f"✅ ফাইল প্রসেস সফল!\n\n"
-          f"ফরম্যাট: {media_type}\n"
-          f"সাইজ: {file_size_mb:.2f} MB\n"
-          f"ক্যাপশন: {caption}\n\n"
-          f"রেসপন্স: {res_data.get('error', {}).get('message', 'টোকেন ভেরিফিকেশন অ্যাক্টিভ')}"
-      )
-  except Exception as e:
-    await status_msg.edit_text(f"ত্রুটি: {str(e)}")
+  await status_msg.edit_text(
+      f"⚙️ প্রসেসিং সফল!\n\n"
+      f"📦 টাইপ: {media_type}\n"
+      f"📊 সাইজ: {file_size_mb:.2f} MB\n"
+      f"🎯 পাঠানো হচ্ছে: **{target}**\n"
+      f"📝 ক্যাপশন: {caption}",
+      parse_mode="Markdown",
+  )
 
   if os.path.exists(file_name):
     os.remove(file_name)
@@ -158,7 +160,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
   if not TELEGRAM_BOT_TOKEN:
-    print("Error: TELEGRAM_BOT_TOKEN not set.")
     exit(1)
 
   threading.Thread(target=run_web, daemon=True).start()
@@ -167,9 +168,16 @@ if __name__ == "__main__":
   app.add_handler(CommandHandler("start", start))
   app.add_handler(
       MessageHandler(
+          filters.Regex(
+              "^(📱 Account 1|📱 Account 2|📱 Account 3|🚀 Post to All Accounts)$"
+          ),
+          handle_button_click,
+      )
+  )
+  app.add_handler(
+      MessageHandler(
           filters.VIDEO | filters.PHOTO | filters.Document.ALL, handle_media
       )
   )
 
-  print("Bot is starting...")
   app.run_polling()

@@ -18,12 +18,15 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
+# Logging configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
+# Mini Web Server for Render Keep-Alive
 web_app = Flask(__name__)
 
 
@@ -37,6 +40,7 @@ def run_web():
   web_app.run(host="0.0.0.0", port=port)
 
 
+# Tokens and Config
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
@@ -79,8 +83,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   text = (
       "স্বাগতম! 🚀\n\n"
       f"🎯 **বর্তমান টার্গেট:** `{USER_TARGETS[user_id]}`\n\n"
-      "নিচের বাটন চেপে টার্গেট নির্বাচন করতে পারো। এরপর যেকোনো ভিডিও, ছবি বা"
-      " ডকুমেন্ট পাঠালে তা স্বয়ংক্রিয়ভাবে প্রস্তুত হবে।"
+      "নিচের বাটন চেপে টার্গেট নির্বাচন করতে পারো। এরপর যেকোনো সাইজের ভিডিও,"
+      " ছবি বা ডকুমেন্ট পাঠালে তা স্বয়ংক্রিয়ভাবে প্রস্তুত হবে।"
   )
 
   await update.message.reply_text(
@@ -123,7 +127,7 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
   }
 
   try:
-    res = requests.post(token_url, headers=headers, data=data)
+    res = requests.post(token_url, headers=headers, data=data, timeout=30)
     res_json = res.json()
 
     if "access_token" in res_json:
@@ -133,7 +137,7 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
       await update.message.reply_text(
           f"🎉 **অভিনন্দন! TikTok অ্যাকাউন্ট সফলভাবে যুক্ত হয়েছে!**\n\n"
           f"🔑 OpenID: `{open_id}`\n\n"
-          f"এখন ভিডিও বা ছবি ক্যাপশনসহ পাঠালে সরাসরি টিকটকে আপলোড হবে!",
+          f"এখন যেকোনো ভিডিও বা ছবি ক্যাপশনসহ পাঠালে সরাসরি টিকটকে আপলোড হবে!",
           parse_mode="Markdown",
       )
     else:
@@ -214,17 +218,21 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
   status_msg = await message.reply_text(
-      f"📥 মিডিয়া গ্রহণ করা হয়েছে!\n🎯 টার্গেট: **{target}**\nডাউনলোডিং...",
+      f"📥 মিডিয়া ফাইল গ্রহণ করা হয়েছে!\n🎯 টার্গেট: **{target}**\nডাউনলোডিং...",
       parse_mode="Markdown",
   )
 
+  file_size = 0
+  file_name = ""
+  media_type = ""
+
   if message.video:
-    media_file = await message.video.get_file()
+    media_file = await message.video.get_file(read_timeout=300)
     file_name = f"downloads_{message.video.file_id}.mp4"
     file_size = message.video.file_size
     media_type = "Video"
   elif message.document:
-    media_file = await message.document.get_file()
+    media_file = await message.document.get_file(read_timeout=300)
     ext = (
         os.path.splitext(message.document.file_name)[1]
         if message.document.file_name
@@ -234,7 +242,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_size = message.document.file_size
     media_type = "File / Document"
   elif message.photo:
-    media_file = await message.photo[-1].get_file()
+    media_file = await message.photo[-1].get_file(read_timeout=300)
     file_name = f"downloads_{message.photo[-1].file_id}.jpg"
     file_size = message.photo[-1].file_size
     media_type = "Photo"
@@ -242,29 +250,32 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await status_msg.edit_text("⚠️ আনসাপোর্টেড ফরম্যাট!")
     return
 
-  await media_file.download_to_drive(file_name)
-  await status_msg.edit_text(
-      f"⚙️ {media_type} টিকটকে সরাসরি আপলোড করা হচ্ছে..."
-  )
-
-  headers = {
-      "Authorization": f"Bearer {token}",
-      "Content-Type": "application/json; charset=UTF-8",
-  }
-
-  # TikTok Inbox Draft Upload API (No Scope/Audit Restrictions)
-  init_url = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
-  payload = {
-      "source_info": {
-          "source": "FILE_UPLOAD",
-          "video_size": file_size,
-          "chunk_size": file_size,
-          "total_chunk_count": 1,
-      }
-  }
-
   try:
-    response = requests.post(init_url, json=payload, headers=headers)
+    await media_file.download_to_drive(file_name)
+    file_size_mb = (file_size / (1024 * 1024)) if file_size else 0
+    await status_msg.edit_text(
+        f"⚙️ {file_size_mb:.1f} MB ফাইল সফলভাবে ডাউনলোড হয়েছে। এবার টিকটকে"
+        " আপলোড হচ্ছে..."
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json; charset=UTF-8",
+    }
+
+    init_url = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
+    payload = {
+        "source_info": {
+            "source": "FILE_UPLOAD",
+            "video_size": file_size,
+            "chunk_size": file_size,
+            "total_chunk_count": 1,
+        }
+    }
+
+    response = requests.post(
+        init_url, json=payload, headers=headers, timeout=60
+    )
     res_data = response.json()
 
     if response.status_code == 200 and "data" in res_data:
@@ -280,22 +291,23 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
           ),
       }
       upload_res = requests.put(
-          upload_url, data=media_bytes, headers=upload_headers
+          upload_url, data=media_bytes, headers=upload_headers, timeout=300
       )
 
       if upload_res.status_code in [200, 201]:
         await status_msg.edit_text(
             f"🎉 **সফলভাবে টিকটকে আপলোড হয়েছে!**\n\n"
             f"📦 টাইপ: {media_type}\n"
+            f"📊 সাইজ: {file_size_mb:.2f} MB\n"
             f"🎯 পোস্ট হয়েছে: **{target}**\n"
             f"📝 ক্যাপশন: {caption}\n\n"
-            f"🔔 টিকটক অ্যাপের System notifications চেক করো, সেখান থেকে এক ক্লিকে"
-            f" পোস্ট হয়ে যাবে!",
+            f"🔔 টিকটক অ্যাপের System notifications চেক করো, সেখান থেকে পোস্ট"
+            f" হয়ে যাবে!",
             parse_mode="Markdown",
         )
       else:
         await status_msg.edit_text(
-            f"⚠️ বাইট আপলোডে সমস্যা: {upload_res.status_code}"
+            f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
         )
     else:
       error_info = res_data.get("error", {})
@@ -304,9 +316,9 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       )
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")
-
-  if os.path.exists(file_name):
-    os.remove(file_name)
+  finally:
+    if os.path.exists(file_name):
+      os.remove(file_name)
 
 
 if __name__ == "__main__":
@@ -315,7 +327,17 @@ if __name__ == "__main__":
 
   threading.Thread(target=run_web, daemon=True).start()
 
-  app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+  # Extended request timeout for large files (up to 300 seconds)
+  t_request = HTTPXRequest(
+      connection_pool_size=8, read_timeout=300.0, write_timeout=300.0
+  )
+  app = (
+      ApplicationBuilder()
+      .token(TELEGRAM_BOT_TOKEN)
+      .request(t_request)
+      .build()
+  )
+
   app.add_handler(CommandHandler("start", start))
   app.add_handler(CommandHandler("help", help_command))
   app.add_handler(CommandHandler("status", status_command))

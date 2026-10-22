@@ -64,10 +64,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   if user_id not in USER_TARGETS:
     USER_TARGETS[user_id] = "🚀 Post to All Accounts"
 
+  # Updated with video.publish scope for Direct Post
   auth_url = (
       f"https://www.tiktok.com/v2/auth/authorize/"
       f"?client_key={TIKTOK_CLIENT_KEY}"
-      f"&scope=user.info.basic,video.upload"
+      f"&scope=user.info.basic,video.upload,video.publish"
       f"&response_type=code"
       f"&redirect_uri=https://google.com"
   )
@@ -215,7 +216,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       parse_mode="Markdown",
   )
 
-  # Check format
   if message.video:
     media_file = await message.video.get_file()
     file_name = f"downloads_{message.video.file_id}.mp4"
@@ -250,7 +250,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       "Content-Type": "application/json; charset=UTF-8",
   }
 
-  # Direct Video Post Init API
   init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
   payload = {
       "post_info": {

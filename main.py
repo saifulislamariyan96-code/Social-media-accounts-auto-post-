@@ -20,13 +20,11 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-# Logging configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
-# Mini Web Server for Render Keep-Alive
 web_app = Flask(__name__)
 
 
@@ -40,13 +38,13 @@ def run_web():
   web_app.run(host="0.0.0.0", port=port)
 
 
-# Tokens and Config
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
+# Permanent token fallback from Environment
+TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")
 
 USER_TARGETS = {}
-TIKTOK_TOKENS = {}
 
 KEYBOARD_LAYOUT = [
     [
@@ -83,26 +81,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   text = (
       "স্বাগতম! 🚀\n\n"
       f"🎯 **বর্তমান টার্গেট:** `{USER_TARGETS[user_id]}`\n\n"
-      "নিচের বাটন চেপে টার্গেট নির্বাচন করতে পারো। এরপর যেকোনো সাইজের ভিডিও,"
-      " ছবি বা ডকুমেন্ট পাঠালে তা স্বয়ংক্রিয়ভাবে প্রস্তুত হবে।"
+      "নিচের বাটন চেপে টার্গেট নির্বাচন করতে পারো। এরপর ভিডিও বা ছবি পাঠাও।"
   )
 
   await update.message.reply_text(
       text, parse_mode="Markdown", reply_markup=REPLY_KEYBOARD
   )
   await update.message.reply_text(
-      "অ্যাকাউন্ট কানেক্ট করতে নিচের বাটনে চাপ দাও:",
+      "অ্যাকাউন্ট কানেক্ট বা টোকেন রিনিউ করতে নিচের বাটনে চাপ দাও:",
       reply_markup=InlineKeyboardMarkup(inline_kb),
   )
 
 
 async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  global TIKTOK_ACCESS_TOKEN
   if not context.args:
     await update.message.reply_text("ব্যবহার: `/token <সম্পূর্ণ লিংক বা কোড>`")
     return
 
   raw_input = " ".join(context.args)
-
   if "code=" in raw_input:
     parsed = urllib.parse.urlparse(raw_input)
     qs = urllib.parse.parse_qs(parsed.query)
@@ -111,10 +108,7 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     auth_code = raw_input
 
   auth_code = urllib.parse.unquote(auth_code)
-
-  await update.message.reply_text(
-      "🔄 কোড এক্সচেঞ্জ করে টিকটক অ্যাক্সেস টোকেন আনা হচ্ছে..."
-  )
+  await update.message.reply_text("🔄 কোড এক্সচেঞ্জ করে টোকেন আনা হচ্ছে...")
 
   token_url = "https://open.tiktokapis.com/v2/oauth/token/"
   headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -131,13 +125,12 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     res_json = res.json()
 
     if "access_token" in res_json:
-      token = res_json["access_token"]
+      TIKTOK_ACCESS_TOKEN = res_json["access_token"]
       open_id = res_json.get("open_id", "Default")
-      TIKTOK_TOKENS["primary"] = token
       await update.message.reply_text(
-          f"🎉 **অভিনন্দন! TikTok অ্যাকাউন্ট সফলভাবে যুক্ত হয়েছে!**\n\n"
+          f"🎉 **TikTok অ্যাকাউন্ট সফলভাবে যুক্ত হয়েছে!**\n\n"
           f"🔑 OpenID: `{open_id}`\n\n"
-          f"এখন যেকোনো ভিডিও বা ছবি ক্যাপশনসহ পাঠালে সরাসরি টিকটকে আপলোড হবে!",
+          f"📌 **স্থায়ী টোকেন (Render Environment-এ সেভ করতে পারো):**\n`{TIKTOK_ACCESS_TOKEN}`",
           parse_mode="Markdown",
       )
     else:
@@ -152,11 +145,11 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   help_text = (
       "ℹ️ **বট ব্যবহারের নিয়মাবলী:**\n\n"
-      "১. নিচে থাকা কিবোর্ড বাটন চেপে কোন অ্যাকাউন্টে পোস্ট করতে চাও তা"
-      " সিলেক্ট করো।\n"
-      "২. ভিডিও, ফটো বা ডকুমেন্ট ফাইল হিসেবে মিডিয়া পাঠাও।\n"
-      "৩. ক্যাপশনে যা লিখবে, সেটাই ভিডিওর আসল ক্যাপশন হিসেবে যাবে।\n"
-      "৪. /status দিয়ে বর্তমান কানেকশন ও অ্যাক্টিভ টার্গেট দেখে নিতে পারো।"
+      "১. নিচে থাকা কিবোর্ড বাটন চেপে টার্গেট অ্যাকাউন্ট নির্বাচন করো।\n"
+      "২. টেলিগ্রাম সাধারণ বটের লিমিট সর্বোচ্চ ২০ MB, তাই ফাইল সাইজ ২০ MB-র কম"
+      " রাখা বাধ্যতামূলক।\n"
+      "৩. ক্যাপশনে যা লিখবে, সেটাই ভিডিওর আসল ক্যাপশন হবে।\n"
+      "৪. /status দিয়ে বর্তমান সার্ভার ও টোকেন স্ট্যাটাস দেখে নাও।"
   )
   await update.message.reply_text(
       help_text, parse_mode="Markdown", reply_markup=REPLY_KEYBOARD
@@ -167,14 +160,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   user_id = update.effective_user.id
   target = USER_TARGETS.get(user_id, "🚀 Post to All Accounts")
   token_status = (
-      "🟢 সংযুক্ত আছে" if "primary" in TIKTOK_TOKENS else "🔴 এখনো যুক্ত হয়নি"
+      "🟢 সক্রিয় আছে" if TIKTOK_ACCESS_TOKEN else "🔴 টোকেন সেট করা নেই"
   )
   status_text = (
       "📊 **বট ও সার্ভার স্ট্যাটাস:**\n\n"
       "🟢 সার্ভার: **অনলাইন (২৪/৭ সচল)**\n"
       f"🔑 টিকটক অ্যাকাউন্ট: **{token_status}**\n"
       f"🎯 বর্তমান টার্গেট: **{target}**\n"
-      "📦 ফরম্যাট সাপোর্ট: ভিডিও, ফটো, আনকমপ্রেসড ফাইল"
+      "📦 সাপোর্ট লিমিট: সর্বোচ্চ ২০ MB"
   )
   await update.message.reply_text(
       status_text, parse_mode="Markdown", reply_markup=REPLY_KEYBOARD
@@ -186,34 +179,31 @@ async def handle_button_click(
 ):
   text = update.message.text
   user_id = update.effective_user.id
-
   valid_buttons = [
       "📱 Account 1 (@ayman9200)",
       "📱 Account 2 (@saiful.islam.ayman)",
       "📱 Account 3 (@saiful.islam.ayman1)",
       "🚀 Post to All Accounts",
   ]
-
   if text in valid_buttons:
     USER_TARGETS[user_id] = text
     await update.message.reply_text(
-        f"✅ টার্গেট সফলভাবে নির্বাচন করা হয়েছে!\n\n🎯 বর্তমান টার্গেট:"
-        f" **{text}**\nএখন মিডিয়া পাঠালে এই টার্গেটে পোস্ট হবে।",
+        f"✅ টার্গেট নির্বাচন সম্পন্ন: **{text}**",
         parse_mode="Markdown",
         reply_markup=REPLY_KEYBOARD,
     )
 
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  global TIKTOK_ACCESS_TOKEN
   message = update.message
   user_id = update.effective_user.id
   target = USER_TARGETS.get(user_id, "🚀 Post to All Accounts")
   caption = message.caption or "Uploaded via AutoPost Bot"
 
-  token = TIKTOK_TOKENS.get("primary")
-  if not token:
+  if not TIKTOK_ACCESS_TOKEN:
     await message.reply_text(
-        "⚠️ কোনো টিকটক অ্যাকাউন্ট এখনো যুক্ত করা হয়নি! আগে কানেক্ট করে নাও।"
+        "⚠️ টিকটক অ্যাকাউন্ট এখনো কানেক্ট করা নেই! আগে /start দিয়ে কানেক্ট করো।"
     )
     return
 
@@ -226,40 +216,55 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
   file_name = ""
   media_type = ""
 
-  if message.video:
-    media_file = await message.video.get_file(read_timeout=300)
-    file_name = f"downloads_{message.video.file_id}.mp4"
-    file_size = message.video.file_size
-    media_type = "Video"
-  elif message.document:
-    media_file = await message.document.get_file(read_timeout=300)
-    ext = (
-        os.path.splitext(message.document.file_name)[1]
-        if message.document.file_name
-        else ".mp4"
-    )
-    file_name = f"downloads_{message.document.file_id}{ext}"
-    file_size = message.document.file_size
-    media_type = "File / Document"
-  elif message.photo:
-    media_file = await message.photo[-1].get_file(read_timeout=300)
-    file_name = f"downloads_{message.photo[-1].file_id}.jpg"
-    file_size = message.photo[-1].file_size
-    media_type = "Photo"
-  else:
-    await status_msg.edit_text("⚠️ আনসাপোর্টেড ফরম্যাট!")
-    return
-
   try:
+    if message.video:
+      file_size = message.video.file_size
+      if file_size and file_size > 20 * 1024 * 1024:
+        await status_msg.edit_text(
+            f"⚠️ ফাইলের সাইজ {file_size / (1024 * 1024):.1f} MB!\n\nটেলিগ্রাম"
+            " বট এপিআই-এর সীমাবদ্ধতার কারণে ২০ MB-র বেশি বড় ফাইল ডাউনলোড করা"
+            " যায় না। ভিডিওটি সাধারণ ভিডিও হিসেবে (কম্প্রেসড) অথবা ২০ MB-র নিচে"
+            " করে পাঠাও।"
+        )
+        return
+      media_file = await message.video.get_file(read_timeout=120)
+      file_name = f"downloads_{message.video.file_id}.mp4"
+      media_type = "Video"
+    elif message.document:
+      file_size = message.document.file_size
+      if file_size and file_size > 20 * 1024 * 1024:
+        await status_msg.edit_text(
+            f"⚠️ ফাইলের সাইজ {file_size / (1024 * 1024):.1f} MB!\n\nটেলিগ্রাম"
+            " বট এপিআই-এর সীমাবদ্ধতার কারণে ২০ MB-র বেশি বড় ফাইল ডাউনলোড করা"
+            " যায় না। ফাইল ২০ MB-র নিচে করে পাঠাও।"
+        )
+        return
+      media_file = await message.document.get_file(read_timeout=120)
+      ext = (
+          os.path.splitext(message.document.file_name)[1]
+          if message.document.file_name
+          else ".mp4"
+      )
+      file_name = f"downloads_{message.document.file_id}{ext}"
+      media_type = "File / Document"
+    elif message.photo:
+      media_file = await message.photo[-1].get_file(read_timeout=120)
+      file_name = f"downloads_{message.photo[-1].file_id}.jpg"
+      file_size = message.photo[-1].file_size
+      media_type = "Photo"
+    else:
+      await status_msg.edit_text("⚠️ আনসাপোর্টেড ফরম্যাট!")
+      return
+
     await media_file.download_to_drive(file_name)
     file_size_mb = (file_size / (1024 * 1024)) if file_size else 0
+
     await status_msg.edit_text(
-        f"⚙️ {file_size_mb:.1f} MB ফাইল সফলভাবে ডাউনলোড হয়েছে। এবার টিকটকে"
-        " আপলোড হচ্ছে..."
+        f"⚙️ {file_size_mb:.2f} MB ডাউনলোড সম্পন্ন। টিকটকে পাঠানো হচ্ছে..."
     )
 
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {TIKTOK_ACCESS_TOKEN}",
         "Content-Type": "application/json; charset=UTF-8",
     }
 
@@ -291,7 +296,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
           ),
       }
       upload_res = requests.put(
-          upload_url, data=media_bytes, headers=upload_headers, timeout=300
+          upload_url, data=media_bytes, headers=upload_headers, timeout=180
       )
 
       if upload_res.status_code in [200, 201]:
@@ -307,7 +312,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
       else:
         await status_msg.edit_text(
-            f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
+            f"⚠️ বাইট আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
         )
     else:
       error_info = res_data.get("error", {})
@@ -327,9 +332,8 @@ if __name__ == "__main__":
 
   threading.Thread(target=run_web, daemon=True).start()
 
-  # Extended request timeout for large files (up to 300 seconds)
   t_request = HTTPXRequest(
-      connection_pool_size=8, read_timeout=300.0, write_timeout=300.0
+      connection_pool_size=8, read_timeout=120.0, write_timeout=120.0
   )
   app = (
       ApplicationBuilder()

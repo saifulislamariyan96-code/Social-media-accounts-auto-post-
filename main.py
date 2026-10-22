@@ -19,13 +19,11 @@ from telegram.ext import (
     filters,
 )
 
-# Logging configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
-# Mini Web Server for Render Keep-Alive
 web_app = Flask(__name__)
 
 
@@ -39,7 +37,6 @@ def run_web():
   web_app.run(host="0.0.0.0", port=port)
 
 
-# Tokens and Config
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
@@ -70,7 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   auth_url = (
       f"https://www.tiktok.com/v2/auth/authorize/"
       f"?client_key={TIKTOK_CLIENT_KEY}"
-      f"&scope=user.info.basic,video.upload,video.publish"
+      f"&scope=user.info.basic,video.upload"
       f"&response_type=code"
       f"&redirect_uri=https://google.com"
   )
@@ -255,22 +252,15 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       "Content-Type": "application/json; charset=UTF-8",
   }
 
-  init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+  # TikTok Inbox Draft Upload API (No Scope/Audit Restrictions)
+  init_url = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
   payload = {
-      "post_info": {
-          "title": caption,
-          "privacy_level": "SELF_ONLY",
-          "disable_duet": False,
-          "disable_comment": False,
-          "disable_stitch": False,
-          "video_cover_timestamp_ms": 1000,
-      },
       "source_info": {
           "source": "FILE_UPLOAD",
           "video_size": file_size,
           "chunk_size": file_size,
           "total_chunk_count": 1,
-      },
+      }
   }
 
   try:
@@ -279,14 +269,15 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if response.status_code == 200 and "data" in res_data:
       upload_url = res_data["data"]["upload_url"]
-      publish_id = res_data["data"].get("publish_id", "N/A")
 
       with open(file_name, "rb") as f:
         media_bytes = f.read()
 
       upload_headers = {
           "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
-          "Content-Type": "video/mp4",
+          "Content-Type": (
+              "video/mp4" if media_type != "Photo" else "image/jpeg"
+          ),
       }
       upload_res = requests.put(
           upload_url, data=media_bytes, headers=upload_headers
@@ -294,13 +285,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
       if upload_res.status_code in [200, 201]:
         await status_msg.edit_text(
-            f"🎉 **সফলভাবে টিকটকে পোস্ট হয়েছে!**\n\n"
+            f"🎉 **সফলভাবে টিকটকে আপলোড হয়েছে!**\n\n"
             f"📦 টাইপ: {media_type}\n"
-            f"🆔 Publish ID: `{publish_id}`\n"
             f"🎯 পোস্ট হয়েছে: **{target}**\n"
             f"📝 ক্যাপশন: {caption}\n\n"
-            f"🔒 মোড: Private (স্যান্ডবক্স পলিসি অনুযায়ী)। টিকটক অ্যাপে ভিডিওটি"
-            f" সরাসরি দেখতে পাবে!",
+            f"🔔 টিকটক অ্যাপের System notifications চেক করো, সেখান থেকে এক ক্লিকে"
+            f" পোস্ট হয়ে যাবে!",
             parse_mode="Markdown",
         )
       else:
@@ -310,8 +300,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
       error_info = res_data.get("error", {})
       await status_msg.edit_text(
-          f"⚠️ টিকটক এপিআই রেসপন্স:\n{error_info.get('message', 'ত্রুটি')}\n"
-          f"কোড: `{error_info.get('code', 'N/A')}`"
+          f"⚠️ টিকটক এপিআই রেসপন্স:\n{error_info.get('message', 'ত্রুটি')}"
       )
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")

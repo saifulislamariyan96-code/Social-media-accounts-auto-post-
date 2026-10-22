@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+from flask import Flask
 import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -10,13 +12,25 @@ from telegram.ext import (
     filters,
 )
 
-# Logging configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
-# API Credentials from Environment
+# Mini Web Server for Render
+web_app = Flask(__name__)
+
+
+@web_app.route("/")
+def home():
+  return "AutoPost Bot is running 24/7!"
+
+
+def run_web():
+  port = int(os.environ.get("PORT", 8080))
+  web_app.run(host="0.0.0.0", port=port)
+
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")
@@ -38,8 +52,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   await update.message.reply_text(
       "স্বাগতম! 🚀\n\n"
-      "আমি ভিডিও, ছবি এবং ফাইল (Document) সব ফরম্যাটই সাপোর্ট করি।\n"
-      "ক্যাপশনসহ যেকোনো মিডিয়া পাঠিয়ে দাও, আমি প্রসেস করে দেবো!",
+      "আমি ভিডিও, ছবি এবং আনকমপ্রেসড ফাইল সব ফরম্যাট সাপোর্ট করি।\n"
+      "ক্যাপশনসহ যেকোনো মিডিয়া পাঠিয়ে দাও!",
       reply_markup=reply_markup,
   )
 
@@ -52,7 +66,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       "📥 মিডিয়া ফাইল গ্রহণ করা হয়েছে! ডাউনলোডিং..."
   )
 
-  # Detect media type: Video, Document (Uncompressed File), or Photo
   if message.video:
     media_file = await message.video.get_file()
     file_name = f"downloads_{message.video.file_id}.mp4"
@@ -69,7 +82,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_size = message.document.file_size
     media_type = "File / Document"
   elif message.photo:
-    # Get the highest resolution image
     media_file = await message.photo[-1].get_file()
     file_name = f"downloads_{message.photo[-1].file_id}.jpg"
     file_size = message.photo[-1].file_size
@@ -140,17 +152,17 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")
 
-  # Clean up downloaded file
   if os.path.exists(file_name):
     os.remove(file_name)
 
 
 if __name__ == "__main__":
   if not TELEGRAM_BOT_TOKEN:
-    print("Error: TELEGRAM_BOT_TOKEN environment variable not set.")
+    print("Error: TELEGRAM_BOT_TOKEN not set.")
     exit(1)
 
-  # Start Telegram Polling
+  threading.Thread(target=run_web, daemon=True).start()
+
   app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
   app.add_handler(CommandHandler("start", start))
   app.add_handler(
@@ -159,5 +171,5 @@ if __name__ == "__main__":
       )
   )
 
-  print("Bot is starting without web server overhead...")
+  print("Bot is starting...")
   app.run_polling()

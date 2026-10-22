@@ -1,9 +1,9 @@
 import logging
 import os
+import re
 import threading
 import urllib.parse
 from flask import Flask
-import gdown
 import requests
 from telegram import (
     InlineKeyboardButton,
@@ -252,6 +252,38 @@ async def upload_to_tiktok(file_path, file_size, caption, target, status_msg):
     )
 
 
+def download_gdrive_file(url, destination):
+  match = re.search(r"/d/([a-zA-Z0-9_-]+)", url) or re.search(
+      r"id=([a-zA-Z0-9_-]+)", url
+  )
+  if not match:
+    raise Exception("সঠিক Google Drive ফাইল আইডি পাওয়া যায়নি!")
+
+  file_id = match.group(1)
+  session = requests.Session()
+  download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+
+  response = session.get(download_url, stream=True, timeout=60)
+
+  # Check if Google Drive asks for confirmation for large files
+  for key, value in response.cookies.items():
+    if key.startswith("download_warning"):
+      download_url = f"https://drive.google.com/uc?export=download&confirm={value}&id={file_id}"
+      response = session.get(download_url, stream=True, timeout=60)
+      break
+
+  if response.status_code != 200:
+    raise Exception(
+        f"ড্রাইভ থেকে ফাইল ডাউনলোড ব্যর্থ হয়েছে (Status: {response.status_code})।"
+        " নিশ্চিত হও লিংকটিতে 'Anyone with the link' অ্যাক্সেস দেওয়া আছে।"
+    )
+
+  with open(destination, "wb") as f:
+    for chunk in response.iter_content(chunk_size=1024 * 1024 * 4):  # 4MB chunks
+      if chunk:
+        f.write(chunk)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
   text = update.message.text
   user_id = update.effective_user.id
@@ -271,30 +303,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_name = f"gdrive_{user_id}.mp4"
 
     try:
-      # Extract URL and Caption
       lines = text.split("\n")
       url = lines[0].strip()
       caption = "\n".join(lines[1:]) if len(lines) > 1 else "AutoPost Gaming"
 
-      # Download using gdown
-      gdown.download(url, file_name, quiet=False, fuzzy=True)
+      # Direct high-speed streaming download
+      download_gdrive_file(url, file_name)
 
       if not os.path.exists(file_name):
-        await status_msg.edit_text(
-            "⚠️ ড্রাইভ থেকে ডাউনলোড করা যায়নি! নিশ্চিত হও ফাইল লিংকটি 'Anyone"
-            " with the link' দেওয়া আছে।"
-        )
+        await status_msg.edit_text("⚠️ ড্রাইভ ফাইল সেভ হতে সমস্যা হয়েছে!")
         return
 
       file_size = os.path.getsize(file_name)
       await status_msg.edit_text(
-          f"⚙️ {file_size / (1024 * 1024):.1f} MB ফাইল নামানো হয়েছে। টিকটকে"
+          f"⚙️ {file_size / (1024 * 1024):.1f} MB ডাউনলোড সম্পন্ন। এবার টিকটকে"
           " আপলোড হচ্ছে..."
       )
 
-      await upload_to_tiktok(
-          file_name, file_size, caption, target, status_msg
-      )
+      await upload_to_tiktok(file_name, file_size, caption, target, status_msg)
     except Exception as e:
       await status_msg.edit_text(f"ত্রুটি: {str(e)}")
     finally:
@@ -328,8 +354,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       if file_size and file_size > 20 * 1024 * 1024:
         await status_msg.edit_text(
             f"⚠️ ফাইলের সাইজ {file_size / (1024 * 1024):.1f} MB!\n\nটেলিগ্রাম"
-            " বট এপিআই-এর লিমিটের কারণে ২০ MB-র বড় ফাইল সরাসরি নেওয়া যায় না।\n👉"
-            " এই ভিডিওটি Google Drive-এ রেখে ড্রাইভ লিংকটি চ্যাটে পাঠিয়ে দাও!"
+            " লিমিট ২০ MB। বড় গেমিং ক্লিপের জন্য Google Drive-এ আপলোড করে লিংক"
+            " পাঠিয়ে দাও।"
         )
         return
       media_file = await message.video.get_file(read_timeout=120)
@@ -374,10 +400,7 @@ if __name__ == "__main__":
       connection_pool_size=8, read_timeout=120.0, write_timeout=120.0
   )
   app = (
-      ApplicationBuilder()
-      .token(TELEGRAM_BOT_TOKEN)
-      .request(t_request)
-      .build()
+      ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(t_request).build()
   )
 
   app.add_handler(CommandHandler("start", start))

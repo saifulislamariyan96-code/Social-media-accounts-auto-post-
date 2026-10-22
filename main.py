@@ -19,11 +19,13 @@ from telegram.ext import (
     filters,
 )
 
+# Logging configuration
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
+# Mini Web Server for Render Keep-Alive
 web_app = Flask(__name__)
 
 
@@ -37,6 +39,7 @@ def run_web():
   web_app.run(host="0.0.0.0", port=port)
 
 
+# Tokens and Config
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
@@ -64,7 +67,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   if user_id not in USER_TARGETS:
     USER_TARGETS[user_id] = "🚀 Post to All Accounts"
 
-  # Updated with video.publish scope for Direct Post
   auth_url = (
       f"https://www.tiktok.com/v2/auth/authorize/"
       f"?client_key={TIKTOK_CLIENT_KEY}"
@@ -80,7 +82,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   text = (
       "স্বাগতম! 🚀\n\n"
       f"🎯 **বর্তমান টার্গেট:** `{USER_TARGETS[user_id]}`\n\n"
-      "নিচের বাটন চেপে টার্গেট নির্বাচন করতে পারো। এরপর যেকোনো ভিডিও, ছবি বা ডকুমেন্ট পাঠালে তা স্বয়ংক্রিয়ভাবে প্রস্তুত হবে।"
+      "নিচের বাটন চেপে টার্গেট নির্বাচন করতে পারো। এরপর যেকোনো ভিডিও, ছবি বা"
+      " ডকুমেন্ট পাঠালে তা স্বয়ংক্রিয়ভাবে প্রস্তুত হবে।"
   )
 
   await update.message.reply_text(
@@ -148,7 +151,8 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   help_text = (
       "ℹ️ **বট ব্যবহারের নিয়মাবলী:**\n\n"
-      "১. নিচে থাকা কিবোর্ড বাটন চেপে কোন অ্যাকাউন্টে পোস্ট করতে চাও তা সিলেক্ট করো।\n"
+      "১. নিচে থাকা কিবোর্ড বাটন চেপে কোন অ্যাকাউন্টে পোস্ট করতে চাও তা"
+      " সিলেক্ট করো।\n"
       "২. ভিডিও, ফটো বা ডকুমেন্ট ফাইল হিসেবে মিডিয়া পাঠাও।\n"
       "৩. ক্যাপশনে যা লিখবে, সেটাই ভিডিওর আসল ক্যাপশন হিসেবে যাবে।\n"
       "৪. /status দিয়ে বর্তমান কানেকশন ও অ্যাক্টিভ টার্গেট দেখে নিতে পারো।"
@@ -192,7 +196,8 @@ async def handle_button_click(
   if text in valid_buttons:
     USER_TARGETS[user_id] = text
     await update.message.reply_text(
-        f"✅ টার্গেট সফলভাবে নির্বাচন করা হয়েছে!\n\n🎯 বর্তমান টার্গেট: **{text}**\nএখন মিডিয়া পাঠালে এই টার্গেটে পোস্ট হবে।",
+        f"✅ টার্গেট সফলভাবে নির্বাচন করা হয়েছে!\n\n🎯 বর্তমান টার্গেট:"
+        f" **{text}**\nএখন মিডিয়া পাঠালে এই টার্গেটে পোস্ট হবে।",
         parse_mode="Markdown",
         reply_markup=REPLY_KEYBOARD,
     )
@@ -254,7 +259,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
   payload = {
       "post_info": {
           "title": caption,
-          "privacy_level": "PUBLIC_TO_EVERYONE",
+          "privacy_level": "SELF_ONLY",
           "disable_duet": False,
           "disable_comment": False,
           "disable_stitch": False,
@@ -294,7 +299,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆔 Publish ID: `{publish_id}`\n"
             f"🎯 পোস্ট হয়েছে: **{target}**\n"
             f"📝 ক্যাপশন: {caption}\n\n"
-            f"টিকটক প্রোফাইলে ভিডিওটি সরাসরি দেখতে পাবে!",
+            f"🔒 মোড: Private (স্যান্ডবক্স পলিসি অনুযায়ী)। টিকটক অ্যাপে ভিডিওটি"
+            f" সরাসরি দেখতে পাবে!",
             parse_mode="Markdown",
         )
       else:

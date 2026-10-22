@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import urllib.parse
 from flask import Flask
 import requests
 from telegram import (
@@ -92,10 +93,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
   if not context.args:
-    await update.message.reply_text("ব্যবহার: `/token <আপনার_কোড>`")
+    await update.message.reply_text("ব্যবহার: `/token <সম্পূর্ণ লিংক বা কোড>`")
     return
 
-  auth_code = context.args[0]
+  raw_input = " ".join(context.args)
+
+  # Auto extract code from URL if full URL is pasted
+  if "code=" in raw_input:
+    parsed = urllib.parse.urlparse(raw_input)
+    qs = urllib.parse.parse_qs(parsed.query)
+    auth_code = qs.get("code", [raw_input])[0]
+  else:
+    auth_code = raw_input
+
+  # URL decode the code
+  auth_code = urllib.parse.unquote(auth_code)
+
   await update.message.reply_text(
       "🔄 কোড এক্সচেঞ্জ করে টিকটক অ্যাক্সেস টোকেন আনা হচ্ছে..."
   )
@@ -126,9 +139,9 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
       )
     else:
       error_msg = res_json.get("error_description") or res_json.get(
-          "message", "অজানা ত্রুটি"
+          "message", str(res_json)
       )
-      await update.message.reply_text(f"⚠️ টোকেন পেতে সমস্যা হয়েছে: {error_msg}")
+      await update.message.reply_text(f"⚠️ টোকেন ত্রুটি: {error_msg}")
   except Exception as e:
     await update.message.reply_text(f"ত্রুটি: {str(e)}")
 
@@ -233,7 +246,6 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       f"⚙️ {media_type} টিকটকে সরাসরি আপলোড করা হচ্ছে..."
   )
 
-  # TikTok Direct Upload Process
   headers = {
       "Authorization": f"Bearer {token}",
       "Content-Type": "application/json; charset=UTF-8",
@@ -275,12 +287,12 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📦 টাইপ: {media_type}\n"
             f"🎯 পোস্ট হয়েছে: **{target}**\n"
             f"📝 ক্যাপশন: {caption}\n\n"
-            f"টিকটক অ্যাপের নোটিফিকেশন বা ইনবক্স চেক করো!",
+            f"টিকটক অ্যাপের ইনবক্স চেক করো!",
             parse_mode="Markdown",
         )
       else:
         await status_msg.edit_text(
-            f"⚠️ বাইট আপলোডে সমস্যা: {upload_res.status_code}"
+            f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
         )
     else:
       await status_msg.edit_text(

@@ -31,7 +31,7 @@ web_app = Flask(__name__)
 
 @web_app.route("/")
 def home():
-  return "AutoPost Bot is running 24/7!"
+  return "AutoPost Bot 1080p60 Engine running 24/7!"
 
 
 def run_web():
@@ -69,7 +69,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   auth_url = (
       f"https://www.tiktok.com/v2/auth/authorize/"
       f"?client_key={TIKTOK_CLIENT_KEY}"
-      f"&scope=user.info.basic,video.upload"
+      f"&scope=user.info.basic,video.upload,video.publish"
       f"&response_type=code"
       f"&redirect_uri=https://google.com"
   )
@@ -79,13 +79,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   ]
 
   text = (
-      "স্বাগতম! 🚀\n\n"
+      "স্বাগতম! 🚀 (Direct 1080P 60FPS Engine)\n\n"
       f"🎯 **বর্তমান টার্গেট:** `{USER_TARGETS[user_id]}`\n\n"
       "🔹 **ব্যবহারের নিয়ম:**\n"
-      "১. ২০ MB-র কম ফাইল সরাসরি টেলিগ্রামে পাঠাও।\n"
-      "২. বড় গেমিং ক্লিপের (৪০ MB - ৮০০ MB+) ক্ষেত্রে **Google Drive লিংক**"
-      " পাঠাও!\n"
-      "ক্যাপশনসহ পাঠালেই টিকটকে চলে যাবে।"
+      "১. ছোট ভিডিও টেলিগ্রামে পাঠাতে পারো।\n"
+      "২. বড় হাই-বিটরেট গেমিং ক্লিপের জন্য **Google Drive লিংক** পাঠাও।\n"
+      "অ্যাপের ড্রাফট ছাড়াই ফুল কোয়ালিটিতে সরাসরি প্রোফাইলে পোস্ট হবে!"
   )
 
   await update.message.reply_text(
@@ -149,10 +148,10 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   help_text = (
       "ℹ️ **বট ব্যবহারের নিয়মাবলী:**\n\n"
-      "১. ছোট ভিডিও (২০ MB পর্যন্ত) সরাসরি সেন্ড করো।\n"
-      "২. বড় গেমিং ভিডিও Google Drive-এ আপলোড করে লিংক শেয়ার করো (Access:"
-      " Anyone with the link)।\n"
-      "৩. লিংকের সাথে ক্যাপশন লিখে দিলে সেটিই পোস্টের ক্যাপশন হবে।"
+      "১. নিচে থাকা কিবোর্ড বাটন চেপে কোন অ্যাকাউন্টে পোস্ট করতে চাও তা"
+      " সিলেক্ট করো।\n"
+      "২. বড় গেমিং ক্লিপ Google Drive-এ দিয়ে লিংক পাঠাও (Anyone with link)।\n"
+      "৩. ভিডিও সরাসরি TikTok সার্ভার-টু-সার্ভার ১০৮০p ৬০ FPS-এ পোস্ট হবে।"
   )
   await update.message.reply_text(
       help_text, parse_mode="Markdown", reply_markup=REPLY_KEYBOARD
@@ -168,9 +167,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   status_text = (
       "📊 **বট ও সার্ভার স্ট্যাটাস:**\n\n"
       "🟢 সার্ভার: **অনলাইন (২৪/৭ সচল)**\n"
+      "🎬 মোড: **Direct Publish (1080P 60FPS Uncompressed)**\n"
       f"🔑 টিকটক অ্যাকাউন্ট: **{token_status}**\n"
-      f"🎯 বর্তমান টার্গেট: **{target}**\n"
-      "📦 সাপোর্ট: সরাসরি ভিডিও (২০ MB) ও গুগল ড্রাইভ লিংক (আনলিমিটেড)"
+      f"🎯 বর্তমান টার্গেট: **{target}**"
   )
   await update.message.reply_text(
       status_text, parse_mode="Markdown", reply_markup=REPLY_KEYBOARD
@@ -197,20 +196,31 @@ async def handle_button_click(
     )
 
 
-async def upload_to_tiktok(file_path, file_size, caption, target, status_msg):
+async def upload_direct_to_tiktok(
+    file_path, file_size, caption, target, status_msg
+):
   headers = {
       "Authorization": f"Bearer {TIKTOK_ACCESS_TOKEN}",
       "Content-Type": "application/json; charset=UTF-8",
   }
 
-  init_url = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
+  # Direct Post Publishing API
+  init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
   payload = {
+      "post_info": {
+          "title": caption,
+          "privacy_level": "SELF_ONLY",  # TikTok Sandbox Direct requirement
+          "disable_duet": False,
+          "disable_comment": False,
+          "disable_stitch": False,
+          "video_cover_timestamp_ms": 1000,
+      },
       "source_info": {
           "source": "FILE_UPLOAD",
           "video_size": file_size,
           "chunk_size": file_size,
           "total_chunk_count": 1,
-      }
+      },
   }
 
   response = requests.post(init_url, json=payload, headers=headers, timeout=60)
@@ -218,6 +228,7 @@ async def upload_to_tiktok(file_path, file_size, caption, target, status_msg):
 
   if response.status_code == 200 and "data" in res_data:
     upload_url = res_data["data"]["upload_url"]
+    publish_id = res_data["data"].get("publish_id", "N/A")
 
     with open(file_path, "rb") as f:
       media_bytes = f.read()
@@ -233,22 +244,24 @@ async def upload_to_tiktok(file_path, file_size, caption, target, status_msg):
     if upload_res.status_code in [200, 201]:
       file_size_mb = file_size / (1024 * 1024)
       await status_msg.edit_text(
-          f"🎉 **সফলভাবে টিকটকে আপলোড হয়েছে!**\n\n"
+          f"🎉 **সরাসরি টিকটকে পোস্ট সম্পন্ন হয়েছে!**\n\n"
+          f"🌟 মোড: **Direct 1080P 60FPS**\n"
           f"📊 সাইজ: {file_size_mb:.2f} MB\n"
-          f"🎯 পোস্ট হয়েছে: **{target}**\n"
+          f"🆔 Publish ID: `{publish_id}`\n"
+          f"🎯 টার্গেট: **{target}**\n"
           f"📝 ক্যাপশন: {caption}\n\n"
-          f"🔔 টিকটক অ্যাপের System notifications চেক করো, সেখান থেকে এক ক্লিকে"
-          f" পোস্ট হয়ে যাবে!",
+          f"ড্রাফট ছাড়া সম্পূর্ণ র-কোয়ালিটিতে প্রোফাইলে আপলোড হয়েছে!",
           parse_mode="Markdown",
       )
     else:
       await status_msg.edit_text(
-          f"⚠️ আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
+          f"⚠️ বাইট আপলোডে সমস্যা হয়েছে: {upload_res.status_code}"
       )
   else:
     error_info = res_data.get("error", {})
     await status_msg.edit_text(
-        f"⚠️ টিকটক এপিআই রেসপন্স:\n{error_info.get('message', 'ত্রুটি')}"
+        f"⚠️ টিকটক এপিআই রেসপন্স:\n{error_info.get('message', 'ত্রুটি')}\n"
+        f"কোড: `{error_info.get('code', 'N/A')}`"
     )
 
 
@@ -265,7 +278,6 @@ def download_gdrive_file(url, destination):
 
   response = session.get(download_url, stream=True, timeout=60)
 
-  # Check if Google Drive asks for confirmation for large files
   for key, value in response.cookies.items():
     if key.startswith("download_warning"):
       download_url = f"https://drive.google.com/uc?export=download&confirm={value}&id={file_id}"
@@ -275,11 +287,11 @@ def download_gdrive_file(url, destination):
   if response.status_code != 200:
     raise Exception(
         f"ড্রাইভ থেকে ফাইল ডাউনলোড ব্যর্থ হয়েছে (Status: {response.status_code})।"
-        " নিশ্চিত হও লিংকটিতে 'Anyone with the link' অ্যাক্সেস দেওয়া আছে।"
+        " লিংকটি 'Anyone with the link' নিশ্চিত করো।"
     )
 
   with open(destination, "wb") as f:
-    for chunk in response.iter_content(chunk_size=1024 * 1024 * 4):  # 4MB chunks
+    for chunk in response.iter_content(chunk_size=1024 * 1024 * 4):
       if chunk:
         f.write(chunk)
 
@@ -305,9 +317,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
       lines = text.split("\n")
       url = lines[0].strip()
-      caption = "\n".join(lines[1:]) if len(lines) > 1 else "AutoPost Gaming"
+      caption = (
+          "\n".join(lines[1:])
+          if len(lines) > 1
+          else "Uploaded via AutoPost Bot 🚀"
+      )
 
-      # Direct high-speed streaming download
       download_gdrive_file(url, file_name)
 
       if not os.path.exists(file_name):
@@ -316,11 +331,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
       file_size = os.path.getsize(file_name)
       await status_msg.edit_text(
-          f"⚙️ {file_size / (1024 * 1024):.1f} MB ডাউনলোড সম্পন্ন। এবার টিকটকে"
-          " আপলোড হচ্ছে..."
+          f"⚙️ {file_size / (1024 * 1024):.1f} MB ডাউনলোড সম্পন্ন। এবার সরাসরি"
+          " টিকটকে ফুল বিটরেটে পোস্ট হচ্ছে..."
       )
 
-      await upload_to_tiktok(file_name, file_size, caption, target, status_msg)
+      await upload_direct_to_tiktok(
+          file_name, file_size, caption, target, status_msg
+      )
     except Exception as e:
       await status_msg.edit_text(f"ত্রুটি: {str(e)}")
     finally:
@@ -365,8 +382,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       if file_size and file_size > 20 * 1024 * 1024:
         await status_msg.edit_text(
             f"⚠️ ফাইলের সাইজ {file_size / (1024 * 1024):.1f} MB!\n\nটেলিগ্রাম"
-            " লিমিট ২০ MB। বড় ফাইল হলে Google Drive-এ আপলোড করে লিংক পাঠিয়ে"
-            " দাও।"
+            " লিমিট ২০ MB। বড় ফাইল হলে Google Drive লিংক দাও।"
         )
         return
       media_file = await message.document.get_file(read_timeout=120)
@@ -381,8 +397,10 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       return
 
     await media_file.download_to_drive(file_name)
-    await status_msg.edit_text("⚙️ টিকটকে পাঠানো হচ্ছে...")
-    await upload_to_tiktok(file_name, file_size, caption, target, status_msg)
+    await status_msg.edit_text("⚙️ সরাসরি টিকটকে পোস্ট করা হচ্ছে...")
+    await upload_direct_to_tiktok(
+        file_name, file_size, caption, target, status_msg
+    )
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")
   finally:

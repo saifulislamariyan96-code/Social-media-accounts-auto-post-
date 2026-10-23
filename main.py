@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -33,24 +34,26 @@ def run_web():
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-def optimize_for_tiktok(input_path: str, output_path: str) -> bool:
-    """4K/র ভিডিওকে টিকটকের গোল্ড স্ট্যান্ডার্ড Sweet Spot-এ রূপান্তর করে"""
+def run_ffmpeg_encode(input_path: str, output_path: str) -> bool:
+    """থ্রেডের ভেতর FFmpeg রেন্ডারিং চালায় যাতে মূল বট ফ্রিজ না হয়"""
     try:
-        # imageio-ffmpeg থেকে সরাসরি FFmpeg এক্সিকিউটেবলের পাথ নেওয়া
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        
+        # নিরাপদ স্কেলিং ফিল্টার (1080x1920 ঠিক রেখে জোরপূর্বক জোড় পিক্সেল বজায় রাখে)
+        vf_filter = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(1080-iw)/2:(1920-ih)/2:black,format=yuv420p"
         
         cmd = [
             ffmpeg_exe, "-y",
             "-i", input_path,
-            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+            "-vf", vf_filter,
             "-r", "60",
             "-c:v", "libx264",
-            "-preset", "fast",
+            "-preset", "veryfast",
             "-profile:v", "high",
             "-level", "4.2",
-            "-b:v", "14500k",
-            "-maxrate", "15000k",
-            "-bufsize", "30000k",
+            "-b:v", "12000k",
+            "-maxrate", "14000k",
+            "-bufsize", "25000k",
             "-c:a", "aac",
             "-b:a", "192k",
             "-ar", "48000",
@@ -58,13 +61,29 @@ def optimize_for_tiktok(input_path: str, output_path: str) -> bool:
             output_path,
         ]
 
-        logging.info(f"FFmpeg Optimization শুরু হচ্ছে: {input_path}")
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-        return True
+        logging.info(f"FFmpeg শুরু হচ্ছে: {input_path}")
+        process = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300
+        )
+        
+        if process.returncode == 0 and os.path.exists(output_path):
+            logging.info("FFmpeg এনকোডিং সফলভাবে সম্পন্ন!")
+            return True
+        else:
+            err_msg = process.stderr.decode("utf-8", errors="ignore")
+            logging.error(f"FFmpeg Error Log: {err_msg}")
+            return False
+
     except Exception as e:
-        err = e.stderr.decode("utf-8", errors="ignore") if hasattr(e, "stderr") and e.stderr else str(e)
-        logging.error(f"FFmpeg Error: {err}")
+        logging.error(f"FFmpeg Exception: {str(e)}")
         return False
+
+async def optimize_video_async(input_path: str, output_path: str) -> bool:
+    """মূল অ্যাসিনক লুপ ফ্রিজ হওয়া ঠেকাতে থ্রেডে রান করায়"""
+    return await asyncio.to_thread(run_ffmpeg_encode, input_path, output_path)
 
 def download_gdrive_file(url, destination):
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", url) or re.search(r"id=([a-zA-Z0-9_-]+)", url)
@@ -93,8 +112,8 @@ def download_gdrive_file(url, destination):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **1080p 60fps Optimizer Bot সচল আছে!**\n\n"
-        "ভিডিও সরাসরি পাঠাও অথবা Google Drive লিংক দাও।\n"
-        "বট Sweet Spot-এ রেন্ডার করে তোমাকে ফেরত পাঠাবে।"
+        "যেকোনো ভিডিও বা Google Drive লিংক দাও।\n"
+        "বট Sweet Spot-এ রেন্ডার করে তোমাকে ভিডিওটি ফেরত পাঠাবে।"
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,9 +132,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raw_size = os.path.getsize(raw_file) / (1024 * 1024)
             await status_msg.edit_text(f"⚙️ {raw_size:.1f} MB ফাইল ডাউনলোড হয়েছে।\nFFmpeg দিয়ে 1080p 60fps CFR-এ এনকোড করা হচ্ছে...")
 
-            success = optimize_for_tiktok(raw_file, opt_file)
+            success = await optimize_video_async(raw_file, opt_file)
             if not success or not os.path.exists(opt_file):
-                await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে! সার্ভার লগ চেক করতে হবে।")
+                await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে! সার্ভার লগ চেক করো।")
                 return
 
             opt_size = os.path.getsize(opt_file) / (1024 * 1024)
@@ -124,7 +143,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(opt_file, "rb") as video_to_send:
                 await update.message.reply_video(
                     video=video_to_send,
-                    caption=f"🎯 **Sweet Spot Optimized Video**\n📐 রেজোলিউশন: 1080x1920\n🎞️ ফ্রেমরেট: 60 FPS (CFR)\n📊 সাইজ: {opt_size:.1f} MB",
+                    caption=f"🎯 **Sweet Spot Optimized Video**\n📐 1080x1920\n🎞️ 60 FPS CFR\n📊 সাইজ: {opt_size:.1f} MB",
                     supports_streaming=True,
                     read_timeout=300,
                     write_timeout=300,
@@ -155,9 +174,9 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await media_file.download_to_drive(raw_file)
         await status_msg.edit_text("⚙️ FFmpeg ইঞ্জিন দিয়ে Sweet Spot (1080p 60fps CFR)-এ রেন্ডার হচ্ছে...")
 
-        success = optimize_for_tiktok(raw_file, opt_file)
+        success = await optimize_video_async(raw_file, opt_file)
         if not success or not os.path.exists(opt_file):
-            await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে!")
+            await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে! সার্ভার লগ চেক করো।")
             return
 
         opt_size = os.path.getsize(opt_file) / (1024 * 1024)

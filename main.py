@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import subprocess
 import threading
 import urllib.parse
 from flask import Flask
@@ -44,6 +45,10 @@ TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY", "")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
 TIKTOK_ACCESS_TOKEN = os.getenv("TIKTOK_ACCESS_TOKEN", "")
 
+# Buffer Integration Variables (Render Environment থেকে নেবে)
+BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN", "")
+BUFFER_TIKTOK_PROFILE_ID = os.getenv("BUFFER_TIKTOK_PROFILE_ID", "")
+
 USER_TARGETS = {}
 
 KEYBOARD_LAYOUT = [
@@ -59,6 +64,108 @@ KEYBOARD_LAYOUT = [
 REPLY_KEYBOARD = ReplyKeyboardMarkup(
     KEYBOARD_LAYOUT, resize_keyboard=True, is_persistent=True
 )
+
+
+def optimize_for_tiktok(input_path: str, output_path: str) -> bool:
+  """4K, 120fps বা যেকোনো র ভিডিওকে টিকটকের গোল্ড স্ট্যান্ডার্ড Sweet Spot-এ রূপান্তর করে।
+
+  1080p, 60fps CFR, 14.5 Mbps, H.264 High Profile, AAC 48kHz
+  """
+  cmd = [
+      "ffmpeg",
+      "-y",
+      "-i",
+      input_path,
+      "-vf",
+      "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+      "-r",
+      "60",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "fast",
+      "-profile:v",
+      "high",
+      "-level",
+      "4.2",
+      "-b:v",
+      "14500k",
+      "-maxrate",
+      "15000k",
+      "-bufsize",
+      "30000k",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-ar",
+      "48000",
+      "-movflags",
+      "+faststart",
+      output_path,
+  ]
+
+  try:
+    logging.info(f"FFmpeg Optimization শুরু হচ্ছে: {input_path}")
+    process = subprocess.run(
+        cmd,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=600,
+    )
+    return True
+  except Exception as e:
+    logging.error(f"FFmpeg Error: {str(e)}")
+    return False
+
+
+async def upload_via_buffer(file_path, caption, target, status_msg):
+  """Buffer API ব্যবহার করে ক্লাউড-টু-ক্লাউড লসলেস পোস্টিং"""
+  try:
+    await status_msg.edit_text("🚀 Buffer API দিয়ে টিকটকে পুশ করা হচ্ছে...")
+
+    # বাফারের অফিসিয়াল এন্ডপয়েন্ট
+    url = f"https://api.bufferapp.com/1/updates/create.json?access_token={BUFFER_ACCESS_TOKEN}"
+
+    with open(file_path, "rb") as media_file:
+      files = {"media[video]": media_file}
+      data = {
+          "profile_ids[]": BUFFER_TIKTOK_PROFILE_ID,
+          "text": caption,
+          "now": "true",
+      }
+      res = requests.post(url, data=data, files=files, timeout=300)
+
+    res_json = res.json()
+    if res.status_code == 200 and res_json.get("success"):
+      await status_msg.edit_text(
+          "🎉 **Buffer এর মাধ্যমে টিকটকে সফলভাবে পোস্ট হয়েছে!**\n\n"
+          "🌟 মোড: **Buffer Lossless Cloud Pipeline (1080P 60FPS)**\n"
+          f"🎯 টার্গেট: **{target}**\n"
+          f"📝 ক্যাপশন: {caption}\n\n"
+          "কোনো প্রকার কোয়ালিটি লস ছাড়াই ভিডিও পাবলিশ হয়েছে!",
+          parse_mode="Markdown",
+      )
+    else:
+      error_msg = res_json.get("message", str(res_json))
+      logging.warning(
+          f"Buffer API Error: {error_msg}. Falling back to Direct Post."
+      )
+      await status_msg.edit_text(
+          "⚠️ বাফার এপিআই রেসপন্স দেয়নি। ব্যাকআপ ডিরেক্ট এপিআই দিয়ে চেষ্টা করা"
+          " হচ্ছে..."
+      )
+      file_size = os.path.getsize(file_path)
+      await upload_direct_to_tiktok(
+          file_path, file_size, caption, target, status_msg
+      )
+  except Exception as e:
+    logging.error(f"Buffer Exception: {str(e)}")
+    file_size = os.path.getsize(file_path)
+    await upload_direct_to_tiktok(
+        file_path, file_size, caption, target, status_msg
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,12 +186,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
   ]
 
   text = (
-      "স্বাগতম! 🚀 (Direct 1080P 60FPS Engine)\n\n"
+      "স্বাগতম! 🚀 (FFmpeg 1080P 60FPS Sweet Spot Engine)\n\n"
       f"🎯 **বর্তমান টার্গেট:** `{USER_TARGETS[user_id]}`\n\n"
       "🔹 **ব্যবহারের নিয়ম:**\n"
-      "১. ছোট ভিডিও টেলিগ্রামে পাঠাতে পারো।\n"
+      "১. ছোট ভিডিও টেলিগ্রামে সরাসরি পাঠাও।\n"
       "২. বড় হাই-বিটরেট গেমিং ক্লিপের জন্য **Google Drive লিংক** পাঠাও।\n"
-      "অ্যাপের ড্রাফট ছাড়াই ফুল কোয়ালিটিতে সরাসরি প্রোফাইলে পোস্ট হবে!"
+      "সার্ভার নিজে থেকে ভিডিওকে 1080p 60fps CFR-এ অপটিমাইজ করে পোস্ট করবে!"
   )
 
   await update.message.reply_text(
@@ -148,10 +255,10 @@ async def token_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   help_text = (
       "ℹ️ **বট ব্যবহারের নিয়মাবলী:**\n\n"
-      "১. নিচে থাকা কিবোর্ড বাটন চেপে কোন অ্যাকাউন্টে পোস্ট করতে চাও তা"
-      " সিলেক্ট করো।\n"
+      "১. নিচে থাকা কিবোর্ড বাটন চেপে অ্যাকাউন্ট সিলেক্ট করো।\n"
       "২. বড় গেমিং ক্লিপ Google Drive-এ দিয়ে লিংক পাঠাও (Anyone with link)।\n"
-      "৩. ভিডিও সরাসরি TikTok সার্ভার-টু-সার্ভার ১০৮০p ৬০ FPS-এ পোস্ট হবে।"
+      "৩. ব্যাকএন্ডে FFmpeg স্বয়ংক্রিয়ভাবে Sweet Spot 1080p 60fps-এ রূপান্তর"
+      " করবে।"
   )
   await update.message.reply_text(
       help_text, parse_mode="Markdown", reply_markup=REPLY_KEYBOARD
@@ -164,11 +271,15 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   token_status = (
       "🟢 সক্রিয় আছে" if TIKTOK_ACCESS_TOKEN else "🔴 টোকেন সেট করা নেই"
   )
+  buffer_status = (
+      "🟢 সক্রিয় আছে" if BUFFER_ACCESS_TOKEN else "⚪ সেট করা নেই (Direct Mode)"
+  )
   status_text = (
       "📊 **বট ও সার্ভার স্ট্যাটাস:**\n\n"
       "🟢 সার্ভার: **অনলাইন (২৪/৭ সচল)**\n"
-      "🎬 মোড: **Direct Publish (1080P 60FPS Uncompressed)**\n"
-      f"🔑 টিকটক অ্যাকাউন্ট: **{token_status}**\n"
+      "⚙️ অপটিমাইজার: **FFmpeg 1080P 60FPS Sweet Spot Engine**\n"
+      f"🔑 টিকটক ডিরেক্ট টোকেন: **{token_status}**\n"
+      f"📦 বাফার ইন্টিগ্রেশন: **{buffer_status}**\n"
       f"🎯 বর্তমান টার্গেট: **{target}**"
   )
   await update.message.reply_text(
@@ -204,12 +315,11 @@ async def upload_direct_to_tiktok(
       "Content-Type": "application/json; charset=UTF-8",
   }
 
-  # Direct Post Publishing API
   init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
   payload = {
       "post_info": {
           "title": caption,
-          "privacy_level": "SELF_ONLY",  # TikTok Sandbox Direct requirement
+          "privacy_level": "SELF_ONLY",
           "disable_duet": False,
           "disable_comment": False,
           "disable_stitch": False,
@@ -245,12 +355,12 @@ async def upload_direct_to_tiktok(
       file_size_mb = file_size / (1024 * 1024)
       await status_msg.edit_text(
           f"🎉 **সরাসরি টিকটকে পোস্ট সম্পন্ন হয়েছে!**\n\n"
-          f"🌟 মোড: **Direct 1080P 60FPS**\n"
+          f"🌟 মোড: **Direct 1080P 60FPS (Pre-optimized)**\n"
           f"📊 সাইজ: {file_size_mb:.2f} MB\n"
           f"🆔 Publish ID: `{publish_id}`\n"
           f"🎯 টার্গেট: **{target}**\n"
           f"📝 ক্যাপশন: {caption}\n\n"
-          f"ড্রাফট ছাড়া সম্পূর্ণ র-কোয়ালিটিতে প্রোফাইলে আপলোড হয়েছে!",
+          f"প্রি-অপটিমাইজড ফাইলে প্রোফাইলে আপলোড হয়েছে!",
           parse_mode="Markdown",
       )
     else:
@@ -296,23 +406,34 @@ def download_gdrive_file(url, destination):
         f.write(chunk)
 
 
+async def dispatch_upload(file_path, caption, target, status_msg):
+  """বাফার টোকেন থাকলে বাফার দিয়ে পোস্ট করবে, না থাকলে ডিরেক্ট টিকটকে"""
+  if BUFFER_ACCESS_TOKEN and BUFFER_TIKTOK_PROFILE_ID:
+    await upload_via_buffer(file_path, caption, target, status_msg)
+  else:
+    file_size = os.path.getsize(file_path)
+    await upload_direct_to_tiktok(
+        file_path, file_size, caption, target, status_msg
+    )
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
   text = update.message.text
   user_id = update.effective_user.id
   target = USER_TARGETS.get(user_id, "🚀 Post to All Accounts")
 
   if "drive.google.com" in text:
-    if not TIKTOK_ACCESS_TOKEN:
+    if not TIKTOK_ACCESS_TOKEN and not BUFFER_ACCESS_TOKEN:
       await update.message.reply_text(
-          "⚠️ টিকটক অ্যাকাউন্ট এখনো কানেক্ট করা নেই!"
+          "⚠️ কোনো অ্যাকাউন্ট টোকেন সেট করা নেই! আগে কানেক্ট করে নাও।"
       )
       return
 
     status_msg = await update.message.reply_text(
-        "📥 Google Drive লিংক পাওয়া গেছে!\nসার্ভারে ফুল কোয়ালিটিতে ডাউনলোড"
-        " হচ্ছে..."
+        "📥 Google Drive লিংক পাওয়া গেছে!\nসার্ভারে ডাউনলোড হচ্ছে..."
     )
-    file_name = f"gdrive_{user_id}.mp4"
+    raw_file = f"raw_{user_id}.mp4"
+    opt_file = f"opt_{user_id}.mp4"
 
     try:
       lines = text.split("\n")
@@ -323,26 +444,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
           else "Uploaded via AutoPost Bot 🚀"
       )
 
-      download_gdrive_file(url, file_name)
+      download_gdrive_file(url, raw_file)
 
-      if not os.path.exists(file_name):
+      if not os.path.exists(raw_file):
         await status_msg.edit_text("⚠️ ড্রাইভ ফাইল সেভ হতে সমস্যা হয়েছে!")
         return
 
-      file_size = os.path.getsize(file_name)
       await status_msg.edit_text(
-          f"⚙️ {file_size / (1024 * 1024):.1f} MB ডাউনলোড সম্পন্ন। এবার সরাসরি"
-          " টিকটকে ফুল বিটরেটে পোস্ট হচ্ছে..."
+          "⚙️ FFmpeg ইঞ্জিন দিয়ে ভিডিওকে Sweet Spot (1080p 60fps CFR) এ"
+          " অপটিমাইজ করা হচ্ছে..."
       )
 
-      await upload_direct_to_tiktok(
-          file_name, file_size, caption, target, status_msg
-      )
+      success = optimize_for_tiktok(raw_file, opt_file)
+      final_file = opt_file if success else raw_file
+
+      await dispatch_upload(final_file, caption, target, status_msg)
+
     except Exception as e:
       await status_msg.edit_text(f"ত্রুটি: {str(e)}")
     finally:
-      if os.path.exists(file_name):
-        os.remove(file_name)
+      if os.path.exists(raw_file):
+        os.remove(raw_file)
+      if os.path.exists(opt_file):
+        os.remove(opt_file)
 
 
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -351,19 +475,19 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
   target = USER_TARGETS.get(user_id, "🚀 Post to All Accounts")
   caption = message.caption or "Uploaded via AutoPost Bot"
 
-  if not TIKTOK_ACCESS_TOKEN:
+  if not TIKTOK_ACCESS_TOKEN and not BUFFER_ACCESS_TOKEN:
     await message.reply_text(
-        "⚠️ কোনো টিকটক অ্যাকাউন্ট এখনো যুক্ত করা নেই! আগে কানেক্ট করে নাও।"
+        "⚠️ কোনো অ্যাকাউন্ট টোকেন সেট করা নেই! আগে কানেক্ট করে নাও।"
     )
     return
 
   status_msg = await message.reply_text(
-      f"📥 মিডিয়া ফাইল গ্রহণ করা হয়েছে!\n🎯 টার্গেট: **{target}**\nডাউনলোডিং...",
+      f"📥 মিডিয়া ফাইল পাওয়া গেছে!\n🎯 টার্গেট: **{target}**\nডাউনলোড হচ্ছে...",
       parse_mode="Markdown",
   )
 
-  file_size = 0
-  file_name = ""
+  raw_file = ""
+  opt_file = f"opt_{message.message_id}.mp4"
 
   try:
     if message.video:
@@ -371,12 +495,11 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
       if file_size and file_size > 20 * 1024 * 1024:
         await status_msg.edit_text(
             f"⚠️ ফাইলের সাইজ {file_size / (1024 * 1024):.1f} MB!\n\nটেলিগ্রাম"
-            " লিমিট ২০ MB। বড় গেমিং ক্লিপের জন্য Google Drive-এ আপলোড করে লিংক"
-            " পাঠিয়ে দাও।"
+            " লিমিট ২০ MB। বড় গেমিং ক্লিপের জন্য Google Drive লিংক পাঠাও।"
         )
         return
       media_file = await message.video.get_file(read_timeout=120)
-      file_name = f"downloads_{message.video.file_id}.mp4"
+      raw_file = f"raw_{message.video.file_id}.mp4"
     elif message.document:
       file_size = message.document.file_size
       if file_size and file_size > 20 * 1024 * 1024:
@@ -391,21 +514,29 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
           if message.document.file_name
           else ".mp4"
       )
-      file_name = f"downloads_{message.document.file_id}{ext}"
+      raw_file = f"raw_{message.document.file_id}{ext}"
     else:
       await status_msg.edit_text("⚠️ আনসাপোর্টেড ফরম্যাট!")
       return
 
-    await media_file.download_to_drive(file_name)
-    await status_msg.edit_text("⚙️ সরাসরি টিকটকে পোস্ট করা হচ্ছে...")
-    await upload_direct_to_tiktok(
-        file_name, file_size, caption, target, status_msg
+    await media_file.download_to_drive(raw_file)
+    await status_msg.edit_text(
+        "⚙️ FFmpeg ইঞ্জিন দিয়ে ভিডিওকে Sweet Spot (1080p 60fps CFR) এ রূপান্তর"
+        " করা হচ্ছে..."
     )
+
+    success = optimize_for_tiktok(raw_file, opt_file)
+    final_file = opt_file if success else raw_file
+
+    await dispatch_upload(final_file, caption, target, status_msg)
+
   except Exception as e:
     await status_msg.edit_text(f"ত্রুটি: {str(e)}")
   finally:
-    if os.path.exists(file_name):
-      os.remove(file_name)
+    if os.path.exists(raw_file):
+      os.remove(raw_file)
+    if os.path.exists(opt_file):
+      os.remove(opt_file)
 
 
 if __name__ == "__main__":

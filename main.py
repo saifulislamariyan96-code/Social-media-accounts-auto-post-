@@ -1,6 +1,3 @@
-import static_ffmpeg
-static_ffmpeg.add_paths()
-
 import logging
 import os
 import re
@@ -8,6 +5,7 @@ import subprocess
 import threading
 from flask import Flask
 import requests
+import imageio_ffmpeg
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -37,26 +35,29 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 def optimize_for_tiktok(input_path: str, output_path: str) -> bool:
     """4K/র ভিডিওকে টিকটকের গোল্ড স্ট্যান্ডার্ড Sweet Spot-এ রূপান্তর করে"""
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", input_path,
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-        "-r", "60",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-profile:v", "high",
-        "-level", "4.2",
-        "-b:v", "14500k",
-        "-maxrate", "15000k",
-        "-bufsize", "30000k",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-ar", "48000",
-        "-movflags", "+faststart",
-        output_path,
-    ]
-
     try:
+        # imageio-ffmpeg থেকে সরাসরি FFmpeg এক্সিকিউটেবলের পাথ নেওয়া
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        
+        cmd = [
+            ffmpeg_exe, "-y",
+            "-i", input_path,
+            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+            "-r", "60",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-b:v", "14500k",
+            "-maxrate", "15000k",
+            "-bufsize", "30000k",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", "48000",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+
         logging.info(f"FFmpeg Optimization শুরু হচ্ছে: {input_path}")
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
         return True
@@ -92,8 +93,8 @@ def download_gdrive_file(url, destination):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **1080p 60fps Optimizer Bot সচল আছে!**\n\n"
-        "ভিডিও ক্লিপ সরাসরি পাঠাও অথবা Google Drive লিংক দাও।\n"
-        "বট ফাইলটিকে নিখুঁত Sweet Spot-এ রেন্ডার করে তোমাকে ফেরত পাঠাবে।"
+        "ভিডিও সরাসরি পাঠাও অথবা Google Drive লিংক দাও।\n"
+        "বট Sweet Spot-এ রেন্ডার করে তোমাকে ফেরত পাঠাবে।"
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):

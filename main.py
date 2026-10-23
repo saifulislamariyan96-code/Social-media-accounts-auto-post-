@@ -1,3 +1,6 @@
+import static_ffmpeg
+static_ffmpeg.add_paths()
+
 import logging
 import os
 import re
@@ -125,7 +128,6 @@ async def upload_via_buffer(file_path, caption, target, status_msg):
   try:
     await status_msg.edit_text("🚀 Buffer API দিয়ে টিকটকে পুশ করা হচ্ছে...")
 
-    # বাফারের অফিসিয়াল এন্ডপয়েন্ট
     url = f"https://api.bufferapp.com/1/updates/create.json?access_token={BUFFER_ACCESS_TOKEN}"
 
     with open(file_path, "rb") as media_file:

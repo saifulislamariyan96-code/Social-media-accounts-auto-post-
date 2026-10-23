@@ -5,7 +5,7 @@ import re
 import subprocess
 import threading
 from flask import Flask
-import requests
+import gdown
 import imageio_ffmpeg
 from telegram import Update
 from telegram.ext import (
@@ -39,20 +39,19 @@ def run_ffmpeg_encode(input_path: str, output_path: str) -> bool:
     try:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         
-        # 1080x1920 বজায় রেখে মেমোরি সেভ করার ফিল্টার
         vf_filter = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(1080-iw)/2:(1920-ih)/2:black,format=yuv420p"
         
         cmd = [
             ffmpeg_exe, "-y",
-            "-threads", "1",               # র‍্যামের দখল নিয়ন্ত্রণে রাখে (512MB এর জন্য আবশ্যক)
+            "-threads", "1",
             "-i", input_path,
             "-vf", vf_filter,
             "-r", "60",
             "-c:v", "libx264",
-            "-preset", "ultrafast",        # র‍্যামে ডেটা জমিয়ে না রেখে সরাসরি প্রসেস করে
-            "-crf", "22",                  # নিখুঁত কোয়ালিটি ও লো মেমোরি বজায় রাখে
+            "-preset", "ultrafast",
+            "-crf", "22",
             "-maxrate", "12000k",
-            "-bufsize", "4000k",           # ছোট বাফার যাতে র‍্যাম ওভারফ্লো না হয়
+            "-bufsize", "4000k",
             "-c:a", "aac",
             "-b:a", "192k",
             "-ar", "48000",
@@ -61,11 +60,12 @@ def run_ffmpeg_encode(input_path: str, output_path: str) -> bool:
         ]
 
         logging.info(f"FFmpeg (Low-RAM) শুরু হচ্ছে: {input_path}")
+        # বড় ফাইলের রেন্ডারিংয়ের জন্য টাইমআউট বাড়িয়ে ৬০০ সেকেন্ড (১০ মিনিট) করা হলো
         process = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=300
+            timeout=600
         )
         
         if process.returncode == 0 and os.path.exists(output_path):
@@ -84,28 +84,17 @@ async def optimize_video_async(input_path: str, output_path: str) -> bool:
     return await asyncio.to_thread(run_ffmpeg_encode, input_path, output_path)
 
 def download_gdrive_file(url, destination):
+    """gdown ব্যবহার করে 100MB+ বড় ফাইলের ভাইরাস স্ক্যান ওয়ার্নিং বাইপাস করে ডাউনলোড"""
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", url) or re.search(r"id=([a-zA-Z0-9_-]+)", url)
     if not match:
         raise Exception("সঠিক Google Drive ফাইল আইডি পাওয়া যায়নি!")
 
     file_id = match.group(1)
-    session = requests.Session()
-    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-
-    response = session.get(download_url, stream=True, timeout=60)
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            download_url = f"https://drive.google.com/uc?export=download&confirm={value}&id={file_id}"
-            response = session.get(download_url, stream=True, timeout=60)
-            break
-
-    if response.status_code != 200:
-        raise Exception(f"ড্রাইভ ডাউনলোড ব্যর্থ হয়েছে (Status: {response.status_code})।")
-
-    with open(destination, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024 * 2):
-            if chunk:
-                f.write(chunk)
+    download_url = f"https://drive.google.com/uc?id={file_id}"
+    
+    output = gdown.download(download_url, destination, quiet=False)
+    if not output or not os.path.exists(destination) or os.path.getsize(destination) < 1000:
+        raise Exception("ড্রাইভ থেকে ফাইল ডাউনলোড ব্যর্থ হয়েছে! ফাইল অ্যাক্সেস 'Anyone with the link' আছে কি না চেক করো।")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -142,8 +131,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     video=video_to_send,
                     caption=f"🎯 **Sweet Spot Optimized Video**\n📐 1080x1920\n🎞️ 60 FPS CFR\n📊 সাইজ: {opt_size:.1f} MB",
                     supports_streaming=True,
-                    read_timeout=300,
-                    write_timeout=300,
+                    read_timeout=600,
+                    write_timeout=600,
                 )
             await status_msg.delete()
 
@@ -184,8 +173,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 video=video_to_send,
                 caption=f"🎯 **Sweet Spot Optimized Video**\n📐 1080x1920\n🎞️ 60 FPS CFR\n📊 সাইজ: {opt_size:.1f} MB",
                 supports_streaming=True,
-                read_timeout=300,
-                write_timeout=300,
+                read_timeout=600,
+                write_timeout=600,
             )
         await status_msg.delete()
 
@@ -201,7 +190,7 @@ if __name__ == "__main__":
 
     threading.Thread(target=run_web, daemon=True).start()
 
-    t_request = HTTPXRequest(connection_pool_size=8, read_timeout=180.0, write_timeout=300.0)
+    t_request = HTTPXRequest(connection_pool_size=8, read_timeout=300.0, write_timeout=600.0)
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(t_request).build()
 
     app.add_handler(CommandHandler("start", start))

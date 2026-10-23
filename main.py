@@ -1,5 +1,4 @@
 import static_ffmpeg
-static_ffmpeg.load_paths()
 static_ffmpeg.add_paths()
 
 import logging

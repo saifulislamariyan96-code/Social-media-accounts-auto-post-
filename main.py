@@ -26,7 +26,7 @@ web_app = Flask(__name__)
 
 @web_app.route("/")
 def home():
-    return "AutoPost Bot 1080p60 Engine running 24/7!"
+    return "AutoPost Bot 1080p60 Low-RAM Engine running 24/7!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -35,25 +35,24 @@ def run_web():
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 def run_ffmpeg_encode(input_path: str, output_path: str) -> bool:
-    """থ্রেডের ভেতর FFmpeg রেন্ডারিং চালায় যাতে মূল বট ফ্রিজ না হয়"""
+    """Render Free Tier (512MB RAM) এর জন্য আল্ট্রা লাইটওয়েট অপটিমাইজেশন"""
     try:
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         
-        # নিরাপদ স্কেলিং ফিল্টার (1080x1920 ঠিক রেখে জোরপূর্বক জোড় পিক্সেল বজায় রাখে)
+        # 1080x1920 বজায় রেখে মেমোরি সেভ করার ফিল্টার
         vf_filter = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(1080-iw)/2:(1920-ih)/2:black,format=yuv420p"
         
         cmd = [
             ffmpeg_exe, "-y",
+            "-threads", "1",               # র‍্যামের দখল নিয়ন্ত্রণে রাখে (512MB এর জন্য আবশ্যক)
             "-i", input_path,
             "-vf", vf_filter,
             "-r", "60",
             "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-profile:v", "high",
-            "-level", "4.2",
-            "-b:v", "12000k",
-            "-maxrate", "14000k",
-            "-bufsize", "25000k",
+            "-preset", "ultrafast",        # র‍্যামে ডেটা জমিয়ে না রেখে সরাসরি প্রসেস করে
+            "-crf", "22",                  # নিখুঁত কোয়ালিটি ও লো মেমোরি বজায় রাখে
+            "-maxrate", "12000k",
+            "-bufsize", "4000k",           # ছোট বাফার যাতে র‍্যাম ওভারফ্লো না হয়
             "-c:a", "aac",
             "-b:a", "192k",
             "-ar", "48000",
@@ -61,7 +60,7 @@ def run_ffmpeg_encode(input_path: str, output_path: str) -> bool:
             output_path,
         ]
 
-        logging.info(f"FFmpeg শুরু হচ্ছে: {input_path}")
+        logging.info(f"FFmpeg (Low-RAM) শুরু হচ্ছে: {input_path}")
         process = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -82,7 +81,6 @@ def run_ffmpeg_encode(input_path: str, output_path: str) -> bool:
         return False
 
 async def optimize_video_async(input_path: str, output_path: str) -> bool:
-    """মূল অ্যাসিনক লুপ ফ্রিজ হওয়া ঠেকাতে থ্রেডে রান করায়"""
     return await asyncio.to_thread(run_ffmpeg_encode, input_path, output_path)
 
 def download_gdrive_file(url, destination):
@@ -105,15 +103,14 @@ def download_gdrive_file(url, destination):
         raise Exception(f"ড্রাইভ ডাউনলোড ব্যর্থ হয়েছে (Status: {response.status_code})।")
 
     with open(destination, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 1024 * 4):
+        for chunk in response.iter_content(chunk_size=1024 * 1024 * 2):
             if chunk:
                 f.write(chunk)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 **1080p 60fps Optimizer Bot সচল আছে!**\n\n"
-        "যেকোনো ভিডিও বা Google Drive লিংক দাও।\n"
-        "বট Sweet Spot-এ রেন্ডার করে তোমাকে ভিডিওটি ফেরত পাঠাবে।"
+        "ভিডিও পাঠাও অথবা Google Drive লিংক দাও।"
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,11 +127,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             download_gdrive_file(url, raw_file)
 
             raw_size = os.path.getsize(raw_file) / (1024 * 1024)
-            await status_msg.edit_text(f"⚙️ {raw_size:.1f} MB ফাইল ডাউনলোড হয়েছে।\nFFmpeg দিয়ে 1080p 60fps CFR-এ এনকোড করা হচ্ছে...")
+            await status_msg.edit_text(f"⚙️ {raw_size:.1f} MB ডাউনলোড সম্পন্ন।\nSweet Spot (1080p 60fps) এ এনকোড হচ্ছে...")
 
             success = await optimize_video_async(raw_file, opt_file)
             if not success or not os.path.exists(opt_file):
-                await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে! সার্ভার লগ চেক করো।")
+                await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে!")
                 return
 
             opt_size = os.path.getsize(opt_file) / (1024 * 1024)
@@ -172,11 +169,11 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         await media_file.download_to_drive(raw_file)
-        await status_msg.edit_text("⚙️ FFmpeg ইঞ্জিন দিয়ে Sweet Spot (1080p 60fps CFR)-এ রেন্ডার হচ্ছে...")
+        await status_msg.edit_text("⚙️ Sweet Spot (1080p 60fps CFR)-এ রেন্ডার হচ্ছে...")
 
         success = await optimize_video_async(raw_file, opt_file)
         if not success or not os.path.exists(opt_file):
-            await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে! সার্ভার লগ চেক করো।")
+            await status_msg.edit_text("❌ অপটিমাইজেশন ব্যর্থ হয়েছে!")
             return
 
         opt_size = os.path.getsize(opt_file) / (1024 * 1024)

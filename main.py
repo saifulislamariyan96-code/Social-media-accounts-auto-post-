@@ -37,7 +37,7 @@ def post_to_buffer(video_url: str, caption: str = ""):
     data = {
         "profile_ids[]": BUFFER_CHANNEL_ID,
         "text": caption if caption else "New Video",
-        "now": False,  # সাথে সাথে পোস্ট করতে True, কিউতে রাখতে False
+        "now": False,
         "media[video]": video_url
     }
     return requests.post(endpoint, headers=headers, data=data)
@@ -74,27 +74,38 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
-# ----------------- ভিডিও রিসিভ হ্যান্ডলার ----------------- #
+# ----------------- ভিডিও ও ডকুমেন্ট রিসিভ হ্যান্ডলার ----------------- #
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    status_msg = await message.reply_text("⏳ ভিডিও প্রসেস হচ্ছে, Buffer-এ পাঠানো শুরু করছি...")
+    caption = message.caption or ""
+
+    # ভিডিও ফাইল বা ডকুমেন্টের অবজেক্ট শনাক্ত করা
+    target_obj = None
+    if message.video:
+        target_obj = message.video
+    elif message.document:
+        doc_name = (message.document.file_name or "").lower()
+        mime_type = (message.document.mime_type or "").lower()
+        # এক্সটেনশন বা মাইমটাইপ চেক
+        if mime_type.startswith("video/") or doc_name.endswith((".mp4", ".mov", ".mkv", ".avi")):
+            target_obj = message.document
+
+    if not target_obj:
+        await message.reply_text("⚠️ অনুগ্রহ করে একটি ভিডিও ফাইল পাঠান।")
+        return
+
+    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! Buffer-এ পাঠানোর জন্য লিঙ্ক তৈরি হচ্ছে...")
 
     try:
-        # ভিডিও বা ডকুমেন্টের ফাইল ও ক্যাপশন রিট্রিভ করা
-        if message.video:
-            video_file = await message.video.get_file()
-            caption = message.caption or ""
-        elif message.document and message.document.mime_type.startswith("video/"):
-            video_file = await message.document.get_file()
-            caption = message.caption or ""
-        else:
-            await status_msg.edit_text("⚠️ অনুগ্রহ করে একটি ভিডিও ফাইল পাঠান।")
-            return
+        # ফাইল ইনফো নেওয়া
+        video_file = await context.bot.get_file(target_obj.file_id)
+        
+        # টেলিগ্রামের ডিরেক্ট ডাউনলোড লিংক
+        direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{video_file.file_path}"
 
-        # টেলিগ্রাম থেকে সরাসরি ভিডিও ফাইল লিংক নেওয়া
-        direct_file_url = video_file.file_path
+        await status_msg.edit_text("⏳ Buffer-এ পোস্ট শিডিউল করা হচ্ছে...")
 
-        # বাফারে পাঠানো
+        # বাফারে রিকোয়েস্ট পাঠানো
         response = post_to_buffer(direct_file_url, caption)
         res_data = response.json()
 
@@ -112,15 +123,15 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ----------------- মেইন রানার ----------------- #
 def main():
-    # ব্যাকগ্রাউন্ডে Flask সার্ভার চালু
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # টেলিগ্রাম বট অ্যাপ্লিকেশন
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.VIDEO | (filters.Document.ALL & filters.Document.MimeType("video/")), handle_video))
+    
+    # ভিডিও অথবা ডকুমেন্ট যেকোনোটি আসলে হ্যান্ডলার ট্রিগার হবে
+    application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, handle_video))
 
     print("Bot is polling...")
     application.run_polling(drop_pending_updates=True)

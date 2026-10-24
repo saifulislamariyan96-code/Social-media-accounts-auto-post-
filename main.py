@@ -112,7 +112,8 @@ def main():
     application.add_handler(MessageHandler(filters.VIDEO | (filters.Document.ALL & filters.Document.MimeType("video/")), handle_video))
 
     print("Bot is polling...")
-    application.run_polling()
+    # drop_pending_updates=True দিলে আগের সব ব্যাকগ্রাউন্ড সেশন ও কনফ্লিক্ট নিজে থেকেই কেটে যাবে
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()

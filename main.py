@@ -27,47 +27,37 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ----------------- Buffer GraphQL API ফাংশন ----------------- #
-def post_to_buffer(video_url: str, caption: str = ""):
-    """Buffer GraphQL API দিয়ে ভিডিও পোস্ট কিউতে পাঠানো"""
+# ----------------- Buffer স্কিমা ও পোস্ট ফাংশন ----------------- #
+def inspect_buffer_schema():
+    """Buffer GraphQL থেকে AssetInput ও CreatePostInput-এর সঠিক ফিল্ডের নাম জানা"""
     endpoint = "https://api.buffer.com/"
     headers = {
         "Authorization": f"Bearer {BUFFER_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
-
-    # Buffer GraphQL Mutation
     query = """
-    mutation CreatePost($input: CreatePostInput!) {
-      createPost(input: $input) {
-        ... on PostActionSuccess {
-          post {
-            id
-            status
-          }
+    query GetSchemaInfo {
+      assetInput: __type(name: "AssetInput") {
+        inputFields {
+          name
+          type { name kind ofType { name kind } }
         }
-        ... on MutationError {
-          message
+      }
+      createPostInput: __type(name: "CreatePostInput") {
+        inputFields {
+          name
         }
       }
     }
     """
-
-    # AssetInput-এ 'type' ছাড়াই শুধু অবজেক্ট ও সঠিক শিডিউলিং পাঠানো
-    variables = {
-        "input": {
-            "channelId": BUFFER_CHANNEL_ID,
-            "text": caption if caption else "New Video",
-            "schedulingType": "addToQueue",
-            "assets": [
-                {
-                    "url": video_url
-                }
-            ]
-        }
-    }
-
-    return requests.post(endpoint, json={"query": query, "variables": variables}, headers=headers)
+    try:
+        res = requests.post(endpoint, json={"query": query}, headers=headers)
+        data = res.json()
+        asset_fields = [f["name"] for f in data.get("data", {}).get("assetInput", {}).get("inputFields", [])]
+        post_fields = [f["name"] for f in data.get("data", {}).get("createPostInput", {}).get("inputFields", [])]
+        return f"AssetInput fields: {asset_fields}\nCreatePostInput fields: {post_fields}"
+    except Exception as e:
+        return f"Schema inspection error: {str(e)}"
 
 # ----------------- /start কমান্ড ----------------- #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,8 +94,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ----------------- ভিডিও ও ডকুমেন্ট রিসিভ হ্যান্ডলার ----------------- #
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
-    caption = message.caption or ""
-
     target_obj = None
     if message.video:
         target_obj = message.video
@@ -119,51 +107,14 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("⚠️ অনুগ্রহ করে একটি ভিডিও ফাইল পাঠান।")
         return
 
-    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! Buffer-এ পাঠানোর লিঙ্ক প্রস্তুত হচ্ছে...")
+    status_msg = await message.reply_text("🔍 Buffer API-এর সঠিক ফিল্ড স্কিমা যাচাই করা হচ্ছে...")
 
     try:
-        video_file = await context.bot.get_file(target_obj.file_id)
-        
-        # ইউআরএল ডুপ্লিকেশন প্রতিরোধ লজিক
-        raw_path = video_file.file_path
-        if raw_path.startswith("http://") or raw_path.startswith("https://"):
-            direct_file_url = raw_path
-        else:
-            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{raw_path}"
-
-        await status_msg.edit_text("⏳ Buffer GraphQL-এ পোস্ট শিডিউল করা হচ্ছে...")
-
-        response = post_to_buffer(direct_file_url, caption)
-        
-        try:
-            res_data = response.json()
-        except Exception:
-            res_data = {"raw_text": response.text}
-
-        # GraphQL রেসপন্স যাচাই
-        create_post_data = res_data.get("data", {}).get("createPost", {})
-        
-        if response.status_code == 200 and "post" in create_post_data:
-            await status_msg.edit_text(
-                f"✅ *সফলভাবে Buffer-এ শিডিউল করা হয়েছে!*\n📌 ক্যাপশন: {caption if caption else 'None'}",
-                parse_mode="Markdown"
-            )
-        else:
-            errors = res_data.get("errors", [])
-            if errors and isinstance(errors, list):
-                err_msg = errors[0].get("message", str(errors[0]))
-            elif "message" in create_post_data:
-                err_msg = create_post_data["message"]
-            else:
-                err_msg = str(res_data)
-
-            await status_msg.edit_text(
-                f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`", 
-                parse_mode="Markdown"
-            )
-
+        # Buffer-এর আসল ফিল্ডগুলো স্ক্যান করে আনা
+        schema_info = inspect_buffer_schema()
+        await status_msg.edit_text(f"📋 *Buffer GraphQL ফিল্ড লিস্ট:*\n```\n{schema_info}\n```", parse_mode="Markdown")
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ কোনো একটি সমস্যা হয়েছে: {str(e)}")
+        await status_msg.edit_text(f"⚠️ ত্রুটি: {str(e)}")
 
 # ----------------- মেইন রানার ----------------- #
 def main():

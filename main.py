@@ -36,7 +36,7 @@ def post_to_buffer(video_url: str, caption: str = ""):
         "Content-Type": "application/json"
     }
 
-    # Buffer GraphQL Mutation (সংশোধিত ফ্র্যাগমেন্ট সহ)
+    # Buffer GraphQL Mutation (নিখুঁত ফ্র্যাগমেন্ট সহ)
     query = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -46,8 +46,8 @@ def post_to_buffer(video_url: str, caption: str = ""):
             status
           }
         }
-        ... on PostActionError {
-          userFriendlyMessage
+        ... on MutationError {
+          message
         }
       }
     }
@@ -146,8 +146,8 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             errors = res_data.get("errors", [])
             if errors and isinstance(errors, list):
                 err_msg = errors[0].get("message", str(errors[0]))
-            elif "userFriendlyMessage" in create_post_data:
-                err_msg = create_post_data["userFriendlyMessage"]
+            elif "message" in create_post_data:
+                err_msg = create_post_data["message"]
             else:
                 err_msg = str(res_data)
 

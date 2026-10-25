@@ -37,7 +37,7 @@ def post_to_buffer(video_url: str, caption: str = ""):
     data = {
         "profile_ids[]": BUFFER_CHANNEL_ID,
         "text": caption if caption else "New Video",
-        "now": False,
+        "now": False,  # সাথে সাথে পোস্ট করতে True, কিউতে রাখতে False
         "media[video]": video_url
     }
     return requests.post(endpoint, headers=headers, data=data)
@@ -79,14 +79,12 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     caption = message.caption or ""
 
-    # ভিডিও ফাইল বা ডকুমেন্টের অবজেক্ট শনাক্ত করা
     target_obj = None
     if message.video:
         target_obj = message.video
     elif message.document:
         doc_name = (message.document.file_name or "").lower()
         mime_type = (message.document.mime_type or "").lower()
-        # এক্সটেনশন বা মাইমটাইপ চেক
         if mime_type.startswith("video/") or doc_name.endswith((".mp4", ".mov", ".mkv", ".avi")):
             target_obj = message.document
 
@@ -97,17 +95,17 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! Buffer-এ পাঠানোর জন্য লিঙ্ক তৈরি হচ্ছে...")
 
     try:
-        # ফাইল ইনফো নেওয়া
         video_file = await context.bot.get_file(target_obj.file_id)
-        
-        # টেলিগ্রামের ডিরেক্ট ডাউনলোড লিংক
         direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{video_file.file_path}"
 
         await status_msg.edit_text("⏳ Buffer-এ পোস্ট শিডিউল করা হচ্ছে...")
 
-        # বাফারে রিকোয়েস্ট পাঠানো
         response = post_to_buffer(direct_file_url, caption)
-        res_data = response.json()
+        
+        try:
+            res_data = response.json()
+        except Exception:
+            res_data = {"raw_text": response.text}
 
         if response.status_code == 200 and res_data.get("success"):
             await status_msg.edit_text(
@@ -115,8 +113,12 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         else:
-            err_msg = res_data.get("message", "অজানা ত্রুটি ঘটেছে।")
-            await status_msg.edit_text(f"❌ Buffer আপলোড ব্যর্থ হয়েছে:\n`{err_msg}`", parse_mode="Markdown")
+            # Buffer থেকে আসা আসল টেক্সট/এরর বের করা
+            err_msg = res_data.get("message") or res_data.get("error") or str(res_data)
+            await status_msg.edit_text(
+                f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`", 
+                parse_mode="Markdown"
+            )
 
     except Exception as e:
         await status_msg.edit_text(f"⚠️ কোনো একটি সমস্যা হয়েছে: {str(e)}")

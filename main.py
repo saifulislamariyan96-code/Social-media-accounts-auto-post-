@@ -53,12 +53,12 @@ def post_to_buffer(video_url: str, caption: str = ""):
     }
     """
 
-    # AssetInput-এর সঠিক কাঠামো: assets -> video -> url
+    # mode ফিল্ড বাধ্যতামূলক যুক্ত করা হয়েছে
     variables = {
         "input": {
             "channelId": BUFFER_CHANNEL_ID,
             "text": caption if caption else "New Video",
-            "schedulingType": "addToQueue",
+            "mode": "addToQueue",
             "assets": [
                 {
                     "video": {

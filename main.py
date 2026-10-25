@@ -36,15 +36,19 @@ def post_to_buffer(video_url: str, caption: str = ""):
         "Content-Type": "application/json"
     }
 
-    # Buffer GraphQL Mutation
+    # Buffer GraphQL Mutation (সংশোধিত ফ্র্যাগমেন্ট সহ)
     query = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
-        post {
-          id
-          status
+        ... on PostActionSuccess {
+          post {
+            id
+            status
+          }
         }
-        userFriendlyMessage
+        ... on PostActionError {
+          userFriendlyMessage
+        }
       }
     }
     """
@@ -131,18 +135,21 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             res_data = {"raw_text": response.text}
 
         # GraphQL রেসপন্স যাচাই
-        if response.status_code == 200 and "data" in res_data and res_data["data"].get("createPost"):
+        create_post_data = res_data.get("data", {}).get("createPost", {})
+        
+        if response.status_code == 200 and "post" in create_post_data:
             await status_msg.edit_text(
                 f"✅ *সফলভাবে Buffer-এ শিডিউল করা হয়েছে!*\n📌 ক্যাপশন: {caption if caption else 'None'}",
                 parse_mode="Markdown"
             )
         else:
-            # GraphQL এরর পার্স করা
             errors = res_data.get("errors", [])
             if errors and isinstance(errors, list):
                 err_msg = errors[0].get("message", str(errors[0]))
+            elif "userFriendlyMessage" in create_post_data:
+                err_msg = create_post_data["userFriendlyMessage"]
             else:
-                err_msg = res_data.get("message") or str(res_data)
+                err_msg = str(res_data)
 
             await status_msg.edit_text(
                 f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`", 

@@ -53,12 +53,13 @@ def post_to_buffer(video_url: str, caption: str = ""):
     }
     """
 
-    # mode ফিল্ড বাধ্যতামূলক যুক্ত করা হয়েছে
+    # mode এবং schedulingType উভয় আবশ্যক ফিল্ড যুক্ত করা হয়েছে
     variables = {
         "input": {
             "channelId": BUFFER_CHANNEL_ID,
             "text": caption if caption else "New Video",
             "mode": "addToQueue",
+            "schedulingType": "automatic",
             "assets": [
                 {
                     "video": {

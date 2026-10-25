@@ -16,7 +16,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 BUFFER_CHANNEL_ID = os.getenv("BUFFER_CHANNEL_ID")
 
-# Render-এর ফ্রি সার্ভার বাঁচিয়ে রাখার জন্য ডামি Flask সার্ভার
+# Render-এর ফ্রি সার্ভার বাঁচিয়ে রাখার জন্য Flask সার্ভার
 app = Flask(__name__)
 
 @app.route('/')
@@ -27,20 +27,43 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ----------------- Buffer API ফাংশন ----------------- #
+# ----------------- Buffer GraphQL API ফাংশন ----------------- #
 def post_to_buffer(video_url: str, caption: str = ""):
-    """Buffer API-তে ভিডিও ও টেক্সট পাঠিয়ে শিডিউল করা"""
-    endpoint = "https://api.bufferapp.com/1/updates/create.json"
+    """Buffer GraphQL API দিয়ে ভিডিও পোস্ট কিউতে পাঠানো"""
+    endpoint = "https://api.buffer.com/"
     headers = {
-        "Authorization": f"Bearer {BUFFER_ACCESS_TOKEN}"
+        "Authorization": f"Bearer {BUFFER_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
     }
-    data = {
-        "profile_ids[]": BUFFER_CHANNEL_ID,
-        "text": caption if caption else "New Video",
-        "now": False,  # সাথে সাথে পোস্ট করতে True, কিউতে রাখতে False
-        "media[video]": video_url
+
+    # Buffer GraphQL Mutation
+    query = """
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        post {
+          id
+          status
+        }
+        userFriendlyMessage
+      }
     }
-    return requests.post(endpoint, headers=headers, data=data)
+    """
+
+    variables = {
+        "input": {
+            "channelId": BUFFER_CHANNEL_ID,
+            "text": caption if caption else "New Video",
+            "schedulingType": "addToQueue",
+            "assets": [
+                {
+                    "type": "video",
+                    "url": video_url
+                }
+            ]
+        }
+    }
+
+    return requests.post(endpoint, json={"query": query, "variables": variables}, headers=headers)
 
 # ----------------- /start কমান্ড ----------------- #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,13 +115,13 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("⚠️ অনুগ্রহ করে একটি ভিডিও ফাইল পাঠান।")
         return
 
-    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! Buffer-এ পাঠানোর জন্য লিঙ্ক তৈরি হচ্ছে...")
+    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! Buffer-এ পাঠানোর লিঙ্ক প্রস্তুত হচ্ছে...")
 
     try:
         video_file = await context.bot.get_file(target_obj.file_id)
         direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{video_file.file_path}"
 
-        await status_msg.edit_text("⏳ Buffer-এ পোস্ট শিডিউল করা হচ্ছে...")
+        await status_msg.edit_text("⏳ Buffer GraphQL-এ পোস্ট শিডিউল করা হচ্ছে...")
 
         response = post_to_buffer(direct_file_url, caption)
         
@@ -107,14 +130,20 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             res_data = {"raw_text": response.text}
 
-        if response.status_code == 200 and res_data.get("success"):
+        # GraphQL রেসপন্স যাচাই
+        if response.status_code == 200 and "data" in res_data and res_data["data"].get("createPost"):
             await status_msg.edit_text(
                 f"✅ *সফলভাবে Buffer-এ শিডিউল করা হয়েছে!*\n📌 ক্যাপশন: {caption if caption else 'None'}",
                 parse_mode="Markdown"
             )
         else:
-            # Buffer থেকে আসা আসল টেক্সট/এরর বের করা
-            err_msg = res_data.get("message") or res_data.get("error") or str(res_data)
+            # GraphQL এরর পার্স করা
+            errors = res_data.get("errors", [])
+            if errors and isinstance(errors, list):
+                err_msg = errors[0].get("message", str(errors[0]))
+            else:
+                err_msg = res_data.get("message") or str(res_data)
+
             await status_msg.edit_text(
                 f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`", 
                 parse_mode="Markdown"
@@ -131,8 +160,6 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    
-    # ভিডিও অথবা ডকুমেন্ট যেকোনোটি আসলে হ্যান্ডলার ট্রিগার হবে
     application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, handle_video))
 
     print("Bot is polling...")

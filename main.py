@@ -36,7 +36,7 @@ def post_to_buffer(video_url: str, caption: str = ""):
         "Content-Type": "application/json"
     }
 
-    # Buffer GraphQL Mutation (নিখুঁত ফ্র্যাগমেন্ট সহ)
+    # Buffer GraphQL Mutation
     query = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -53,6 +53,7 @@ def post_to_buffer(video_url: str, caption: str = ""):
     }
     """
 
+    # AssetInput-এ 'type' ছাড়াই শুধু অবজেক্ট ও সঠিক শিডিউলিং পাঠানো
     variables = {
         "input": {
             "channelId": BUFFER_CHANNEL_ID,
@@ -60,7 +61,6 @@ def post_to_buffer(video_url: str, caption: str = ""):
             "schedulingType": "addToQueue",
             "assets": [
                 {
-                    "type": "video",
                     "url": video_url
                 }
             ]
@@ -123,7 +123,13 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         video_file = await context.bot.get_file(target_obj.file_id)
-        direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{video_file.file_path}"
+        
+        # ইউআরএল ডুপ্লিকেশন প্রতিরোধ লজিক
+        raw_path = video_file.file_path
+        if raw_path.startswith("http://") or raw_path.startswith("https://"):
+            direct_file_url = raw_path
+        else:
+            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{raw_path}"
 
         await status_msg.edit_text("⏳ Buffer GraphQL-এ পোস্ট শিডিউল করা হচ্ছে...")
 

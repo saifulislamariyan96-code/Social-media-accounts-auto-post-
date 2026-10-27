@@ -1,19 +1,29 @@
+import asyncio
+
+# Python 3.12+ ও 3.14 এর জন্য ইভেন্ট লুপ ফিক্স (Pyrogram ক্র্যাশ প্রতিরোধ)
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
 import os
 import threading
 import requests
 from flask import Flask
 from pyrogram import Client, filters
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message
 
 # ----------------- কনফিগারেশন ----------------- #
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+API_ID_RAW = os.getenv("API_ID", "").strip()
+API_ID = int(API_ID_RAW) if API_ID_RAW.isdigit() else 0
+API_HASH = os.getenv("API_HASH", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
-BUFFER_CHANNEL_ID = os.getenv("BUFFER_CHANNEL_ID")
+BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN", "").strip()
+BUFFER_CHANNEL_ID = os.getenv("BUFFER_CHANNEL_ID", "").strip()
 
-# Render ওয়েব সার্ভিস সচল রাখার জন্য Flask
+# Render সার্ভার সচল রাখার ফ্লাস্ক সার্ভার
 app = Flask(__name__)
 
 @app.route('/')
@@ -24,7 +34,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ----------------- Buffer GraphQL ফাংশন ----------------- #
+# ----------------- Buffer GraphQL API ----------------- #
 def post_to_buffer(video_url: str, caption: str = ""):
     endpoint = "https://api.buffer.com/"
     headers = {
@@ -55,43 +65,28 @@ def post_to_buffer(video_url: str, caption: str = ""):
             "mode": "addToQueue",
             "schedulingType": "automatic",
             "assets": [
-                {
-                    "video": {
-                        "url": video_url
-                    }
-                }
+                {"video": {"url": video_url}}
             ]
         }
     }
 
     return requests.post(endpoint, json={"query": query, "variables": variables}, headers=headers)
 
-# ----------------- Pyrogram ক্লায়েন্ট ইনিশিয়ালাইজ ----------------- #
+# ----------------- Pyrogram ক্লায়েন্ট ----------------- #
 bot = Client(
-    "auto_post_bot",
+    "auto_post_session",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    in_memory=True
 )
 
-# ----------------- /start কমান্ড ----------------- #
 @bot.on_message(filters.command("start") & filters.private)
 async def start_handler(client: Client, message: Message):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ CompressBase", url="https://compressbase.com/upload-method")]
-    ])
-    
-    welcome_text = (
-        "👋 **স্বাগতম!**\n\n"
-        "এই বটে তুমি যেকোনো সাইজের ভিডিও সরাসরি পাঠাতে পারবে (কোনো ২০ MB লিমিট নেই)।\n"
-        "ভিডিওর সাথে ক্যাপশন থাকলে তা পোস্টে যুক্ত হবে এবং সরাসরি Buffer কিউতে শিডিউল হয়ে যাবে!"
-    )
-    await message.reply_text(welcome_text, reply_markup=keyboard)
+    await message.reply_text("👋 স্বাগতম! যেকোনো সাইজের ভিডিও ক্যাপশনসহ এখানে পাঠাও, সরাসরি বাফারে শিডিউল হয়ে যাবে।")
 
-# ----------------- ভিডিও ও ডকুমেন্ট হ্যান্ডলার ----------------- #
 @bot.on_message((filters.video | filters.document) & filters.private)
 async def media_handler(client: Client, message: Message):
-    # ডকুমেন্ট ফাইল হলে সেটি ভিডিও কিনা যাচাই
     if message.document:
         mime = message.document.mime_type or ""
         fname = (message.document.file_name or "").lower()
@@ -99,23 +94,18 @@ async def media_handler(client: Client, message: Message):
             return
 
     caption = message.caption or ""
-    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! প্রসেস করা হচ্ছে...")
+    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! লিঙ্ক প্রস্তুত হচ্ছে...")
 
     try:
-        # Pyrogram ফাইল অবজেক্ট থেকে সরাসরি ডাউনলোড লিঙ্ক বা পাথ নেওয়া
-        # ছোট ও বড় সব ফাইলের জন্য অফিসিয়াল ফাইল লিঙ্ক ফেচ
-        file_id = message.video.file_id if message.video else message.document.file_id
-        file_obj = await client.get_file(file_id)
-
-        # ডিরেক্ট URL প্রস্তুতকরণ
-        if hasattr(file_obj, "file_path") and file_obj.file_path:
-            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_obj.file_path}"
+        target = message.video or message.document
+        file_path_url = await client.get_file(target.file_id)
+        
+        if hasattr(file_path_url, "file_path") and file_path_url.file_path:
+            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path_url.file_path}"
         else:
-            # বড় ফাইলের ক্ষেত্রে এক্সপোর্ট লিংক মেকানিজম
-            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_id}"
+            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{target.file_id}"
 
-        await status_msg.edit_text("⏳ Buffer GraphQL-এ পোস্ট শিডিউল করা হচ্ছে...")
-
+        await status_msg.edit_text("⏳ Buffer-এ পোস্ট শিডিউল করা হচ্ছে...")
         response = post_to_buffer(direct_file_url, caption)
         
         try:
@@ -126,25 +116,17 @@ async def media_handler(client: Client, message: Message):
         create_post_data = res_data.get("data", {}).get("createPost", {})
 
         if response.status_code == 200 and "post" in create_post_data:
-            await status_msg.edit_text(
-                f"✅ **সফলভাবে Buffer-এ শিডিউল করা হয়েছে!**\n📌 ক্যাপশন: {caption if caption else 'None'}"
-            )
+            await status_msg.edit_text(f"✅ সফলভাবে Buffer-এ শিডিউল করা হয়েছে!\n📌 ক্যাপশন: {caption if caption else 'None'}")
         else:
             errors = res_data.get("errors", [])
-            if errors and isinstance(errors, list):
-                err_msg = errors[0].get("message", str(errors[0]))
-            elif "message" in create_post_data:
-                err_msg = create_post_data["message"]
-            else:
-                err_msg = str(res_data)
-
+            err_msg = errors[0].get("message") if errors else create_post_data.get("message", str(res_data))
             await status_msg.edit_text(f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`")
 
     except Exception as e:
         await status_msg.edit_text(f"⚠️ ত্রুটি: {str(e)}")
 
-# ----------------- রানার ----------------- #
+# ----------------- মেইন রানার ----------------- #
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
-    print("Bot started via Pyrogram...")
+    print("Bot is running perfectly on Python 3.14...")
     bot.run()

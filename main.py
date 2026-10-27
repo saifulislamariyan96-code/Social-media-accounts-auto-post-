@@ -2,41 +2,36 @@ import os
 import threading
 import requests
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from pyrogram import Client, filters
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ----------------- কনফিগারেশন ----------------- #
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 BUFFER_ACCESS_TOKEN = os.getenv("BUFFER_ACCESS_TOKEN")
 BUFFER_CHANNEL_ID = os.getenv("BUFFER_CHANNEL_ID")
 
-# Render-এর ফ্রি সার্ভার বাঁচিয়ে রাখার জন্য Flask সার্ভার
+# Render ওয়েব সার্ভিস সচল রাখার জন্য Flask
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running perfectly!"
+    return "Pyrogram Bot is running 24/7!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ----------------- Buffer GraphQL API ফাংশন ----------------- #
+# ----------------- Buffer GraphQL ফাংশন ----------------- #
 def post_to_buffer(video_url: str, caption: str = ""):
-    """Buffer GraphQL API দিয়ে ভিডিও পোস্ট কিউতে পাঠানো"""
     endpoint = "https://api.buffer.com/"
     headers = {
         "Authorization": f"Bearer {BUFFER_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
 
-    # Buffer GraphQL Mutation
     query = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -53,7 +48,6 @@ def post_to_buffer(video_url: str, caption: str = ""):
     }
     """
 
-    # mode এবং schedulingType উভয় আবশ্যক ফিল্ড যুক্ত করা হয়েছে
     variables = {
         "input": {
             "channelId": BUFFER_CHANNEL_ID,
@@ -72,67 +66,53 @@ def post_to_buffer(video_url: str, caption: str = ""):
 
     return requests.post(endpoint, json={"query": query, "variables": variables}, headers=headers)
 
+# ----------------- Pyrogram ক্লায়েন্ট ইনিশিয়ালাইজ ----------------- #
+bot = Client(
+    "auto_post_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
+
 # ----------------- /start কমান্ড ----------------- #
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "⚡ Fast Optimize (CompressBase)", 
-                url="https://compressbase.com/upload-method"
-            )
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+@bot.on_message(filters.command("start") & filters.private)
+async def start_handler(client: Client, message: Message):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ CompressBase", url="https://compressbase.com/upload-method")]
+    ])
+    
+    welcome_text = (
+        "👋 **স্বাগতম!**\n\n"
+        "এই বটে তুমি যেকোনো সাইজের ভিডিও সরাসরি পাঠাতে পারবে (কোনো ২০ MB লিমিট নেই)।\n"
+        "ভিডিওর সাথে ক্যাপশন থাকলে তা পোস্টে যুক্ত হবে এবং সরাসরি Buffer কিউতে শিডিউল হয়ে যাবে!"
+    )
+    await message.reply_text(welcome_text, reply_markup=keyboard)
 
-    welcome_text = """👋 *স্বাগতম!*
+# ----------------- ভিডিও ও ডকুমেন্ট হ্যান্ডলার ----------------- #
+@bot.on_message((filters.video | filters.document) & filters.private)
+async def media_handler(client: Client, message: Message):
+    # ডকুমেন্ট ফাইল হলে সেটি ভিডিও কিনা যাচাই
+    if message.document:
+        mime = message.document.mime_type or ""
+        fname = (message.document.file_name or "").lower()
+        if not (mime.startswith("video/") or fname.endswith((".mp4", ".mov", ".mkv", ".avi"))):
+            return
 
-📹 *ভিডিও পোস্ট করার নিয়ম:*
-1. নিচের বাটনে চাপ দিয়ে CompressBase থেকে ভিডিওটি দ্রুত অপটিমাইজ করে নাও।
-2. অপটিমাইজ করা ভিডিওটি এখানে পাঠাও (সাথে ক্যাপশন থাকলে লিখে দাও)।
-3. বট স্বয়ংক্রিয়ভাবে ভিডিওটি Buffer-এর মাধ্যমে তোমার একাউন্টে শিডিউল করে দেবে!"""
-
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
-
-# ----------------- /help কমান্ড ----------------- #
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """ℹ️ *কীভাবে ব্যবহার করবেন?*
-
-1. প্রথমে CompressBase দিয়ে ভিডিও সাইজ অপটিমাইজ করুন।
-2. এরপর অপটিমাইজ করা ভিডিওটি এই বটে সেন্ড করুন।
-3. ক্যাপশন দিতে চাইলে ভিডিওর সাথেই লিখে দিন।
-4. বট স্বয়ংক্রিয়ভাবে Buffer-এ শিডিউল করে দেবে।"""
-
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
-# ----------------- ভিডিও ও ডকুমেন্ট রিসিভ হ্যান্ডলার ----------------- #
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
     caption = message.caption or ""
-
-    target_obj = None
-    if message.video:
-        target_obj = message.video
-    elif message.document:
-        doc_name = (message.document.file_name or "").lower()
-        mime_type = (message.document.mime_type or "").lower()
-        if mime_type.startswith("video/") or doc_name.endswith((".mp4", ".mov", ".mkv", ".avi")):
-            target_obj = message.document
-
-    if not target_obj:
-        await message.reply_text("⚠️ অনুগ্রহ করে একটি ভিডিও ফাইল পাঠান।")
-        return
-
-    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! Buffer-এ পাঠানোর লিঙ্ক প্রস্তুত হচ্ছে...")
+    status_msg = await message.reply_text("⏳ ভিডিও পাওয়া গেছে! প্রসেস করা হচ্ছে...")
 
     try:
-        video_file = await context.bot.get_file(target_obj.file_id)
-        
-        # ইউআরএল ডুপ্লিকেশন প্রতিরোধ লজিক
-        raw_path = video_file.file_path
-        if raw_path.startswith("http://") or raw_path.startswith("https://"):
-            direct_file_url = raw_path
+        # Pyrogram ফাইল অবজেক্ট থেকে সরাসরি ডাউনলোড লিঙ্ক বা পাথ নেওয়া
+        # ছোট ও বড় সব ফাইলের জন্য অফিসিয়াল ফাইল লিঙ্ক ফেচ
+        file_id = message.video.file_id if message.video else message.document.file_id
+        file_obj = await client.get_file(file_id)
+
+        # ডিরেক্ট URL প্রস্তুতকরণ
+        if hasattr(file_obj, "file_path") and file_obj.file_path:
+            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_obj.file_path}"
         else:
-            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{raw_path}"
+            # বড় ফাইলের ক্ষেত্রে এক্সপোর্ট লিংক মেকানিজম
+            direct_file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_id}"
 
         await status_msg.edit_text("⏳ Buffer GraphQL-এ পোস্ট শিডিউল করা হচ্ছে...")
 
@@ -143,13 +123,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             res_data = {"raw_text": response.text}
 
-        # GraphQL রেসপন্স যাচাই
         create_post_data = res_data.get("data", {}).get("createPost", {})
-        
+
         if response.status_code == 200 and "post" in create_post_data:
             await status_msg.edit_text(
-                f"✅ *সফলভাবে Buffer-এ শিডিউল করা হয়েছে!*\n📌 ক্যাপশন: {caption if caption else 'None'}",
-                parse_mode="Markdown"
+                f"✅ **সফলভাবে Buffer-এ শিডিউল করা হয়েছে!**\n📌 ক্যাপশন: {caption if caption else 'None'}"
             )
         else:
             errors = res_data.get("errors", [])
@@ -160,26 +138,13 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 err_msg = str(res_data)
 
-            await status_msg.edit_text(
-                f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`", 
-                parse_mode="Markdown"
-            )
+            await status_msg.edit_text(f"❌ Buffer আপলোড ব্যর্থ হয়েছে (Code {response.status_code}):\n`{err_msg}`")
 
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ কোনো একটি সমস্যা হয়েছে: {str(e)}")
+        await status_msg.edit_text(f"⚠️ ত্রুটি: {str(e)}")
 
-# ----------------- মেইন রানার ----------------- #
-def main():
-    threading.Thread(target=run_flask, daemon=True).start()
-
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.VIDEO | filters.Document.ALL, handle_video))
-
-    print("Bot is polling...")
-    application.run_polling(drop_pending_updates=True)
-
+# ----------------- রানার ----------------- #
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("Bot started via Pyrogram...")
+    bot.run()

@@ -167,10 +167,18 @@ bot = Client(
 
 @bot.on_message(filters.command("start") & filters.private)
 async def start_handler(client: Client, message: Message):
-    await message.reply_text(
-        "👋 **TikTok Auto-Post Assistant-এ স্বাগতম!**\n\n"
-        "ভিডিও ক্যাপশনসহ ড্রপ করো। বাটন চেপে সরাসরি পোস্ট বা সহজ টাইমে (যেমন: `8:30 pm`) শিডিউল করতে পারবে।"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ Fast Optimize (CompressBase)", url="https://compressbase.com/upload-method")]
+    ])
+    
+    welcome_text = (
+        "👋 **স্বাগতম!**\n\n"
+        "📹 **ভিডিও পোস্ট করার নিয়ম:**\n"
+        "1. নিচের বাটনে চাপ দিয়ে CompressBase থেকে ভিডিওটি দ্রুত অপটিমাইজ করে নিতে পারো (ঐচ্ছিক)।\n"
+        "2. যেকোনো সাইজের ভিডিও এখানে পাঠাও (সাথে ক্যাপশন থাকলে লিখে দাও)।\n"
+        "3. ভিডিও পাঠানোর পর টিকটকের প্রাইভেসি, কমেন্ট ও সরাসরি বা সহজ ভাষায় (যেমন: `8:30 pm`) শিডিউল করার ড্যাশবোর্ড চলে আসবে!"
     )
+    await message.reply_text(welcome_text, reply_markup=keyboard)
 
 # ভিডিও হ্যান্ডলার
 @bot.on_message((filters.video | filters.document) & filters.private)
